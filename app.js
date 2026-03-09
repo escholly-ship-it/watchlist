@@ -13,11 +13,17 @@ const WATCH_REGION = 'DE';
 const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
 let syncStatus = 'idle'; // idle | syncing | synced | error
 
-// Read sync key from URL hash (#sync=KEY) — never sent to server
+// Read sync key: URL hash (#sync=KEY) on first visit, then persisted in localStorage
 function getSyncKey() {
   const hash = window.location.hash;
   const match = hash.match(/sync=([^&]+)/);
-  return match ? match[1] : null;
+  if (match) {
+    // Hash present — persist to localStorage for future launches (e.g. homescreen)
+    localStorage.setItem('watchlist_sync_key', match[1]);
+    return match[1];
+  }
+  // No hash — try localStorage (homescreen launch, cache cleared hash)
+  return localStorage.getItem('watchlist_sync_key');
 }
 const SYNC_KEY = getSyncKey();
 const SYNC_ENABLED = !!SYNC_KEY;
