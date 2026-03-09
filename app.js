@@ -9,6 +9,11 @@ const TMDB_IMG = 'https://image.tmdb.org/t/p';
 const STORAGE_KEY = 'watchlist_items';
 const WATCH_REGION = 'DE';
 
+// ---- Sync Configuration ----
+const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
+const SYNC_KEY = 'UguJaxV_hRnY0utsdPvmFR0OZ7D-_QOVETxdYkBRbOw';
+let syncStatus = 'idle'; // idle | syncing | synced | error
+
 // ---- Streaming Services with TMDB provider IDs ----
 const SERVICES = [
   { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8] },
@@ -55,15 +60,17 @@ const $serviceGrid = document.getElementById('serviceGrid');
 const $btnSave = document.getElementById('btnSave');
 
 // ---- Init ----
-function init() {
-  loadItems();
+async function init() {
+  loadItemsLocal();
   renderFilterBar();
   renderWatchlist();
   bindEvents();
+  // Sync from server (non-blocking)
+  await pullFromServer();
 }
 
-// ---- Storage ----
-function loadItems() {
+// ---- Storage (Local) ----
+function loadItemsLocal() {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     items = data ? JSON.parse(data) : [];
@@ -72,8 +79,102 @@ function loadItems() {
   }
 }
 
-function saveItems() {
+function saveItemsLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+}
+
+// ---- Sync ----
+function setSyncStatus(status) {
+  syncStatus = status;
+  const el = document.getElementById('syncIndicator');
+  if (!el) return;
+  el.className = 'sync-indicator ' + status;
+  el.textContent = { idle: '', syncing: '↻', synced: '✓', error: '!' }[status] || '';
+  if (status === 'synced') {
+    setTimeout(() => { if (syncStatus === 'synced') setSyncStatus('idle'); }, 2000);
+  }
+}
+
+async function pushToServer() {
+  try {
+    setSyncStatus('syncing');
+    const res = await fetch(SYNC_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setSyncStatus('synced');
+  } catch (err) {
+    console.error('Sync push error:', err);
+    setSyncStatus('error');
+  }
+}
+
+async function pullFromServer() {
+  try {
+    setSyncStatus('syncing');
+    const res = await fetch(SYNC_URL, {
+      headers: { 'X-API-Key': SYNC_KEY },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const remote = data.items || [];
+
+    if (remote.length === 0 && items.length > 0) {
+      // Server empty, push local data up
+      await pushToServer();
+    } else if (remote.length > 0) {
+      // Merge: remote wins for conflicts (by tmdbId+type), keep local-only items
+      const merged = mergeItems(items, remote);
+      items = merged;
+      saveItemsLocal();
+      renderFilterBar();
+      renderWatchlist();
+      setSyncStatus('synced');
+    } else {
+      setSyncStatus('synced');
+    }
+  } catch (err) {
+    console.error('Sync pull error:', err);
+    setSyncStatus('error');
+  }
+}
+
+function mergeItems(local, remote) {
+  // Build map by unique key (tmdbId + type)
+  const map = new Map();
+
+  // Local items first
+  local.forEach(item => {
+    const key = `${item.tmdbId}_${item.type}`;
+    map.set(key, item);
+  });
+
+  // Remote items overwrite (server = source of truth) but keep newer local changes
+  remote.forEach(item => {
+    const key = `${item.tmdbId}_${item.type}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+    } else {
+      // Keep whichever was modified more recently
+      const localTime = existing.updatedAt || existing.addedAt || 0;
+      const remoteTime = item.updatedAt || item.addedAt || 0;
+      if (remoteTime >= localTime) {
+        map.set(key, item);
+      }
+    }
+  });
+
+  return [...map.values()];
+}
+
+function saveItems() {
+  // Add updatedAt timestamp for merge tracking
+  items.forEach(item => { item.updatedAt = Date.now(); });
+  saveItemsLocal();
+  pushToServer(); // async, non-blocking
 }
 
 function exportData() {
