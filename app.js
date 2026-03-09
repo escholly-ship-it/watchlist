@@ -11,8 +11,16 @@ const WATCH_REGION = 'DE';
 
 // ---- Sync Configuration ----
 const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
-const SYNC_KEY = 'UguJaxV_hRnY0utsdPvmFR0OZ7D-_QOVETxdYkBRbOw';
 let syncStatus = 'idle'; // idle | syncing | synced | error
+
+// Read sync key from URL hash (#sync=KEY) — never sent to server
+function getSyncKey() {
+  const hash = window.location.hash;
+  const match = hash.match(/sync=([^&]+)/);
+  return match ? match[1] : null;
+}
+const SYNC_KEY = getSyncKey();
+const SYNC_ENABLED = !!SYNC_KEY;
 
 // ---- Streaming Services with TMDB provider IDs ----
 const SERVICES = [
@@ -96,6 +104,7 @@ function setSyncStatus(status) {
 }
 
 async function pushToServer() {
+  if (!SYNC_ENABLED) return;
   try {
     setSyncStatus('syncing');
     const res = await fetch(SYNC_URL, {
@@ -112,6 +121,7 @@ async function pushToServer() {
 }
 
 async function pullFromServer() {
+  if (!SYNC_ENABLED) return;
   try {
     setSyncStatus('syncing');
     const res = await fetch(SYNC_URL, {
