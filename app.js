@@ -28,6 +28,28 @@ function getSyncKey() {
 const SYNC_KEY = getSyncKey();
 const SYNC_ENABLED = !!SYNC_KEY;
 
+// If hash contains sync key, dynamically update manifest so iOS homescreen
+// bakes the hash into the bookmark URL (standalone PWAs have isolated storage)
+if (SYNC_KEY && window.location.hash.includes('sync=')) {
+  const manifest = {
+    name: "Watchlist",
+    short_name: "Watchlist",
+    description: "Deine persönliche Streaming-Watchlist",
+    start_url: `/watchlist/#sync=${SYNC_KEY}`,
+    scope: "/watchlist/",
+    display: "standalone",
+    background_color: "#0a0a0f",
+    theme_color: "#0a0a0f",
+    icons: [
+      { src: "icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "icon-512.png", sizes: "512x512", type: "image/png" }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const link = document.querySelector('link[rel="manifest"]');
+  if (link) link.href = URL.createObjectURL(blob);
+}
+
 // ---- Streaming Services with TMDB provider IDs ----
 const SERVICES = [
   { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8] },
