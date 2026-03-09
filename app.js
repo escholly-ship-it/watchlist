@@ -47,7 +47,7 @@ const SERVICES = [
   { id: 'hbo',       name: 'HBO Max',     color: '#b91ad1', tmdbIds: [384, 1899] },
   { id: 'paramount', name: 'Paramount+',  color: '#0064ff', tmdbIds: [531] },
   { id: 'magenta',   name: 'Magenta TV',  color: '#e20074', tmdbIds: [178] },
-  { id: 'joyne',     name: 'Joyne',       color: '#ff6600', tmdbIds: [421] },
+  { id: 'joyn',      name: 'Joyn',        color: '#169b62', tmdbIds: [304, 421] },
   { id: 'ard',       name: 'ARD',         color: '#004e8a', tmdbIds: [219] },
   { id: 'zdf',       name: 'ZDF',         color: '#fa7d19', tmdbIds: [537, 536] },
   { id: 'rtl',       name: 'RTL+',        color: '#e3001b', tmdbIds: [298, 1771] },
@@ -97,6 +97,13 @@ function loadItemsLocal() {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     items = data ? JSON.parse(data) : [];
+    // Migrate old 'joyne' -> 'joyn'
+    items.forEach(item => {
+      if (item.serviceId === 'joyne') item.serviceId = 'joyn';
+      if (item.providers) {
+        item.providers.flat = item.providers.flat?.map(id => id === 'joyne' ? 'joyn' : id) || [];
+      }
+    });
   } catch {
     items = [];
   }
