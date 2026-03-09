@@ -7,7 +7,31 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0a0a0f">
   <title>Watchlist</title>
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" id="manifestLink">
+  <script>
+    // Dynamic manifest: bake sync key into start_url for iOS homescreen Web App mode.
+    // Must run synchronously in <head> BEFORE iOS reads the manifest.
+    (function() {
+      var key = new URLSearchParams(window.location.search).get('key');
+      if (key) {
+        var m = {
+          name:"Watchlist",short_name:"Watchlist",
+          description:"Deine persönliche Streaming-Watchlist",
+          start_url:"/watchlist/?key="+key,
+          scope:"/watchlist/",display:"standalone",
+          background_color:"#0a0a0f",theme_color:"#0a0a0f",
+          icons:[
+            {src:"icon-192.png",sizes:"192x192",type:"image/png"},
+            {src:"icon-512.png",sizes:"512x512",type:"image/png"}
+          ]
+        };
+        document.getElementById('manifestLink').href =
+          URL.createObjectURL(new Blob([JSON.stringify(m)],{type:'application/json'}));
+      } else {
+        document.getElementById('manifestLink').href = 'manifest.json';
+      }
+    })();
+  </script>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="apple-touch-icon" href="icon-192.png">
