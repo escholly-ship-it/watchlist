@@ -13,41 +13,28 @@ const WATCH_REGION = 'DE';
 const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
 let syncStatus = 'idle'; // idle | syncing | synced | error
 
-// Read sync key: URL hash (#sync=KEY) on first visit, then persisted in localStorage
+// Read sync key from URL: ?key=KEY (query param) or #sync=KEY (legacy hash)
+// Query params survive iOS homescreen bookmarks; hash fragments don't.
 function getSyncKey() {
+  // 1. Check query parameter (?key=KEY) — primary method
+  const params = new URLSearchParams(window.location.search);
+  const qKey = params.get('key');
+  if (qKey) return qKey;
+
+  // 2. Check hash fragment (#sync=KEY) — legacy/backward compat
   const hash = window.location.hash;
   const match = hash.match(/sync=([^&]+)/);
-  if (match) {
-    // Hash present — persist to localStorage for future launches (e.g. homescreen)
-    localStorage.setItem('watchlist_sync_key', match[1]);
-    return match[1];
-  }
-  // No hash — try localStorage (homescreen launch, cache cleared hash)
+  if (match) return match[1];
+
+  // 3. Fallback to localStorage
   return localStorage.getItem('watchlist_sync_key');
 }
 const SYNC_KEY = getSyncKey();
 const SYNC_ENABLED = !!SYNC_KEY;
 
-// If hash contains sync key, dynamically update manifest so iOS homescreen
-// bakes the hash into the bookmark URL (standalone PWAs have isolated storage)
-if (SYNC_KEY && window.location.hash.includes('sync=')) {
-  const manifest = {
-    name: "Watchlist",
-    short_name: "Watchlist",
-    description: "Deine persönliche Streaming-Watchlist",
-    start_url: `/watchlist/#sync=${SYNC_KEY}`,
-    scope: "/watchlist/",
-    display: "standalone",
-    background_color: "#0a0a0f",
-    theme_color: "#0a0a0f",
-    icons: [
-      { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-      { src: "icon-512.png", sizes: "512x512", type: "image/png" }
-    ]
-  };
-  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-  const link = document.querySelector('link[rel="manifest"]');
-  if (link) link.href = URL.createObjectURL(blob);
+// Persist key to localStorage as backup
+if (SYNC_KEY) {
+  localStorage.setItem('watchlist_sync_key', SYNC_KEY);
 }
 
 // ---- Streaming Services with TMDB provider IDs ----
