@@ -254,8 +254,17 @@ async function fetchProviders(tmdbId, mediaType) {
       return [...mapped];
     };
 
+    // Merge flatrate + free + ads into one "available in subscription/free" list
+    // ARD/ZDF are free mediatheken (appear under "free" or "ads", not "flatrate")
+    // RTL+ free tier appears under "ads"
+    const allFlat = new Set([
+      ...mapProviders(de.flatrate),
+      ...mapProviders(de.free),
+      ...mapProviders(de.ads),
+    ]);
+
     return {
-      flat: mapProviders(de.flatrate),
+      flat: [...allFlat],
       rent: mapProviders(de.rent),
       buy: mapProviders(de.buy),
     };
