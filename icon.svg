@@ -4,34 +4,22 @@
       <stop offset="0%" stop-color="#1c1c30"/>
       <stop offset="100%" stop-color="#0a0a14"/>
     </linearGradient>
-    <linearGradient id="redGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="red" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#ff1a2d"/>
       <stop offset="100%" stop-color="#b80710"/>
     </linearGradient>
-    <linearGradient id="bookmark" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#e5e5e5"/>
-      <stop offset="100%" stop-color="#aaa"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#e50914" flood-opacity="0.4"/>
-    </filter>
-    <filter id="bkShadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.5"/>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#e50914" flood-opacity="0.35"/>
     </filter>
   </defs>
-
   <!-- Background -->
   <rect width="512" height="512" rx="108" fill="url(#bg)"/>
   <rect x="2" y="2" width="508" height="508" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
-
-  <!-- Play button — slightly left of center -->
-  <polygon points="160,155 340,260 160,365" fill="url(#redGlow)" filter="url(#shadow)"/>
-  <polygon points="178,178 312,260 178,342" fill="#ffffff" opacity="0.07"/>
-
-  <!-- Bookmark ribbon — top right corner -->
-  <g filter="url(#bkShadow)">
-    <path d="M340,60 L340,195 L370,170 L400,195 L400,60 Z" fill="url(#bookmark)" opacity="0.9"/>
-    <!-- Small check on bookmark -->
-    <polyline points="354,110 366,122 390,95" fill="none" stroke="#e50914" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
+  <!-- Play button left -->
+  <polygon points="120,160 280,256 120,352" fill="url(#red)" filter="url(#glow)"/>
+  <polygon points="140,182 255,256 140,330" fill="#ffffff" opacity="0.07"/>
+  <!-- Three horizontal lines (queue/list) right side -->
+  <line x1="310" y1="200" x2="420" y2="200" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+  <line x1="310" y1="256" x2="400" y2="256" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  <line x1="310" y1="312" x2="380" y2="312" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.3"/>
 </svg>
