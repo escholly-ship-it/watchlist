@@ -71,6 +71,7 @@ function esc(str) {
 let items = [];
 let activeFilter = 'all';
 let activeService = null;
+let activeSort = 'added';
 let selectedTmdb = null;
 let selectedService = null;
 let availableServices = [];
@@ -431,9 +432,11 @@ function renderWatchlist() {
     filtered = filtered.filter(i => i.serviceId === activeService);
   }
 
-  // Sort: unwatched first, then by date added (newest first)
+  // Sort: unwatched first, then by active sort
   filtered.sort((a, b) => {
     if (a.watched !== b.watched) return a.watched ? 1 : -1;
+    if (activeSort === 'rating') return (b.rating || 0) - (a.rating || 0);
+    if (activeSort === 'alpha') return (a.title || '').localeCompare(b.title || '', 'de');
     return (b.addedAt || 0) - (a.addedAt || 0);
   });
 
@@ -851,6 +854,10 @@ function bindEvents() {
       chip.classList.add('active');
       activeService = null;
       $filterBar.querySelectorAll('.service-chip').forEach(c => c.classList.remove('active'));
+    } else if (chip.dataset.sort) {
+      activeSort = chip.dataset.sort;
+      $filterBar.querySelectorAll('.sort-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
     } else if (chip.dataset.service) {
       if (activeService === chip.dataset.service) {
         activeService = null;
