@@ -703,7 +703,6 @@ body {
 /* ---- Detail Modal ---- */
 .detail-modal {
   position: relative;
-  overflow: hidden;
 }
 
 .detail-backdrop {

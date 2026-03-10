@@ -272,54 +272,26 @@ async function pullFromServer() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const remote = data.items || [];
+    const hasSyncedBefore = !!localStorage.getItem('watchlist_last_sync');
 
-    if (remote.length === 0 && items.length > 0) {
-      // Server empty, push local data up
+    if (remote.length === 0 && items.length > 0 && !hasSyncedBefore) {
+      // First-time setup: server empty and never synced before — push local data up
       await pushToServer();
-    } else if (remote.length > 0) {
-      // Merge: remote wins for conflicts (by tmdbId+type), keep local-only items
-      const merged = mergeItems(items, remote);
-      items = merged;
+    } else {
+      // Server is source of truth — replace local data
+      items = remote;
       saveItemsLocal();
       renderFilterBar();
       renderWatchlist();
       setSyncStatus('synced');
-    } else {
-      setSyncStatus('synced');
     }
+
+    // Mark that we've synced at least once
+    localStorage.setItem('watchlist_last_sync', Date.now().toString());
   } catch (err) {
     console.error('Sync pull error:', err);
     setSyncStatus('error');
   }
-}
-
-function mergeItems(local, remote) {
-  // Build map by unique key (tmdbId + type)
-  const map = new Map();
-
-  // Local items first
-  local.forEach(item => {
-    const key = `${item.tmdbId}_${item.type}`;
-    map.set(key, item);
-  });
-
-  // Remote items overwrite (server = source of truth) but keep newer local changes
-  remote.forEach(item => {
-    const key = `${item.tmdbId}_${item.type}`;
-    const existing = map.get(key);
-    if (!existing) {
-      map.set(key, item);
-    } else {
-      // Keep whichever was modified more recently
-      const localTime = existing.updatedAt || existing.addedAt || 0;
-      const remoteTime = item.updatedAt || item.addedAt || 0;
-      if (remoteTime >= localTime) {
-        map.set(key, item);
-      }
-    }
-  });
-
-  return [...map.values()];
 }
 
 function saveItems() {
