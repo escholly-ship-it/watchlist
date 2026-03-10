@@ -59,6 +59,14 @@ SERVICES.forEach(svc => {
   svc.tmdbIds.forEach(pid => { PROVIDER_MAP[pid] = svc.id; });
 });
 
+// ---- Sanitize (XSS protection) ----
+function esc(str) {
+  if (!str) return '';
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 // ---- State ----
 let items = [];
 let activeFilter = 'all';
@@ -315,8 +323,6 @@ function mergeItems(local, remote) {
 }
 
 function saveItems() {
-  // Add updatedAt timestamp for merge tracking
-  items.forEach(item => { item.updatedAt = Date.now(); });
   saveItemsLocal();
   pushToServer(); // async, non-blocking
 }
@@ -492,17 +498,17 @@ function createCard(item) {
 
   card.innerHTML = `
     ${item.poster
-      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" alt="${item.title}" loading="lazy">`
+      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" alt="${esc(item.title)}" loading="lazy">`
       : `<div class="card-no-poster">🎬</div>`
     }
     <div class="card-overlay">
-      <div class="card-title">${item.title}</div>
+      <div class="card-title">${esc(item.title)}</div>
       <div class="card-meta">
-        <span class="card-year">${item.year}</span>
+        <span class="card-year">${esc(item.year)}</span>
         <span class="card-type">${item.type === 'tv' ? 'Serie' : 'Film'}</span>
       </div>
     </div>
-    ${svc ? `<div class="service-badge" style="background:${svc.color}">${svc.name}</div>` : ''}
+    ${svc ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
   `;
 
   card.addEventListener('click', () => openDetail(item));
@@ -526,11 +532,11 @@ function renderSearchResults(results) {
       <img class="result-poster"
            src="${tmdbPoster(r.poster_path, 'w92') || ''}"
            alt=""
-           onerror="this.style.background='#222'">
+           onerror="this.src='';this.style.background='#222'">
       <div class="result-info">
-        <div class="result-title">${getTitle(r)}</div>
-        <div class="result-meta">${getYear(r)} · ${getType(r)}</div>
-        ${r.overview ? `<div class="result-overview">${r.overview}</div>` : ''}
+        <div class="result-title">${esc(getTitle(r))}</div>
+        <div class="result-meta">${esc(getYear(r))} · ${getType(r)}</div>
+        ${r.overview ? `<div class="result-overview">${esc(r.overview)}</div>` : ''}
       </div>
     </div>
   `).join('');
@@ -600,8 +606,8 @@ async function selectResult(result) {
   $selectedTitle.innerHTML = `
     <img src="${tmdbPoster(result.poster_path, 'w92') || ''}" alt="">
     <div>
-      <div class="selected-title-text">${getTitle(result)}</div>
-      <div class="selected-title-sub">${getYear(result)} · ${getType(result)}</div>
+      <div class="selected-title-text">${esc(getTitle(result))}</div>
+      <div class="selected-title-sub">${esc(getYear(result))} · ${getType(result)}</div>
     </div>
   `;
 
@@ -667,6 +673,7 @@ function addItem() {
     serviceId: selectedService,
     watched: false,
     addedAt: Date.now(),
+    updatedAt: Date.now(),
     providers: availableServices,
   };
 
@@ -678,7 +685,10 @@ function addItem() {
 }
 
 // ---- Detail View ----
+let detailRequestId = 0; // race condition guard
+
 async function openDetail(item) {
+  const requestId = ++detailRequestId;
   const svc = SERVICES.find(s => s.id === item.serviceId);
   const $backdrop = document.getElementById('detailBackdrop');
   const $content = document.getElementById('detailContent');
@@ -695,15 +705,18 @@ async function openDetail(item) {
   const ratingPct = item.rating ? Math.round(item.rating * 10) : null;
 
   $content.innerHTML = `
-    ${svc ? `<div class="detail-service-badge" style="background:${svc.color}">${svc.name}</div>` : ''}
-    <h2 class="detail-title">${item.title}</h2>
+    <button class="detail-close" aria-label="Schließen">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    ${svc ? `<div class="detail-service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
+    <h2 class="detail-title">${esc(item.title)}</h2>
     <div class="detail-meta">
       ${ratingPct ? `<span class="detail-match">${ratingPct}% Match</span>` : ''}
-      <span>${item.year}</span>
+      <span>${esc(item.year)}</span>
       <span>·</span>
       <span>${item.type === 'tv' ? 'Serie' : 'Film'}</span>
     </div>
-    ${item.overview ? `<p class="detail-overview">${item.overview}</p>` : ''}
+    ${item.overview ? `<p class="detail-overview">${esc(item.overview)}</p>` : ''}
     <div id="detailProviders"></div>
     <div class="detail-actions">
       <button class="btn-watched" data-id="${item.id}">
@@ -715,8 +728,11 @@ async function openDetail(item) {
   `;
 
   // Bind actions
+  $content.querySelector('.detail-close').addEventListener('click', closeDetailModal);
+
   $content.querySelector('.btn-watched').addEventListener('click', () => {
     item.watched = !item.watched;
+    item.updatedAt = Date.now();
     saveItems();
     closeDetailModal();
     renderWatchlist();
@@ -737,8 +753,18 @@ async function openDetail(item) {
   $providers.innerHTML = '<div class="availability-loading"><div class="spinner"></div> Verfügbarkeit prüfen...</div>';
 
   const providers = await fetchProviders(item.tmdbId, item.type);
-  item.providers = providers;
-  saveItems();
+
+  // Race condition guard: only update if this is still the active detail view
+  if (requestId !== detailRequestId) return;
+
+  // Only save if providers actually changed
+  const oldProviders = JSON.stringify(item.providers || {});
+  const newProviders = JSON.stringify(providers);
+  if (oldProviders !== newProviders) {
+    item.providers = providers;
+    item.updatedAt = Date.now();
+    saveItems();
+  }
 
   // Render provider badges
   let providerHtml = '';
@@ -749,7 +775,7 @@ async function openDetail(item) {
       const s = SERVICES.find(x => x.id === svcId);
       if (s) {
         const isCurrent = svcId === item.serviceId;
-        providerHtml += `<div class="detail-provider-badge" style="background:${s.color}${isCurrent ? '' : ';opacity:0.7'}">${s.name}</div>`;
+        providerHtml += `<div class="detail-provider-badge" style="background:${s.color}${isCurrent ? '' : ';opacity:0.7'}">${esc(s.name)}</div>`;
       }
     });
     providerHtml += '</div>';
@@ -758,7 +784,7 @@ async function openDetail(item) {
   // Check if current service is no longer available
   if (providers.flat.length > 0 && !providers.flat.includes(item.serviceId)) {
     const altNames = providers.flat.map(id => SERVICES.find(s => s.id === id)?.name).filter(Boolean);
-    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Nicht mehr bei ${svc?.name || 'deinem Dienst'} im Abo! Verfügbar bei: ${altNames.join(', ')}</div>`;
+    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Nicht mehr bei ${esc(svc?.name || 'deinem Dienst')} im Abo! Verfügbar bei: ${esc(altNames.join(', '))}</div>`;
   } else if (providers.flat.length === 0 && providers.rent.length === 0 && providers.buy.length === 0) {
     providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Aktuell keine Streaming-Verfügbarkeit in DE gefunden</div>`;
   }

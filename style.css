@@ -624,10 +624,6 @@ body {
   animation: spin 0.6s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .service-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -731,6 +727,28 @@ body {
   position: relative;
   padding: 0 18px 28px;
   margin-top: -50px;
+}
+
+.detail-close {
+  position: absolute;
+  top: -158px;
+  right: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.detail-close:hover {
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .detail-service-badge {
