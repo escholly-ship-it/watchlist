@@ -83,12 +83,13 @@ body {
 .logo-dot {
   color: #555;
   font-weight: 400;
+  margin: 0 1px;
 }
 
 .logo-l {
   color: #e5e5e5;
   letter-spacing: -0.5px;
-  margin-left: -6px;
+  margin-left: 1px;
 }
 
 .logo-play {
