@@ -90,6 +90,118 @@ async function init() {
   bindEvents();
   // Sync from server (non-blocking)
   await pullFromServer();
+  // Check for auto-add URL parameter (?add=tmdbId&type=movie)
+  const autoAdd = getAutoAddParams();
+  if (autoAdd.tmdbId && autoAdd.mediaType) {
+    await handleAutoAdd(autoAdd.tmdbId, autoAdd.mediaType);
+  }
+}
+
+// ---- Auto-Add via URL ----
+function getAutoAddParams() {
+  const params = new URLSearchParams(window.location.search);
+  const add = params.get('add');
+  const type = params.get('type');
+  return {
+    tmdbId: add ? parseInt(add) : null,
+    mediaType: type || null,
+  };
+}
+
+async function handleAutoAdd(tmdbId, mediaType) {
+  // Already on watchlist?
+  const existing = items.find(i => i.tmdbId === tmdbId && i.type === mediaType);
+  if (existing) {
+    showAutoAddToast(`„${existing.title}" ist bereits auf deiner Watchlist`, 'info');
+    cleanAutoAddParams();
+    return;
+  }
+
+  showAutoAddToast('Wird hinzugefügt…', 'loading');
+
+  try {
+    // Fetch TMDB details
+    const detailRes = await fetch(`${TMDB_BASE}/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&language=de-DE`);
+    if (!detailRes.ok) throw new Error(`TMDB ${detailRes.status}`);
+    const detail = await detailRes.json();
+
+    // Fetch providers
+    const providers = await fetchProviders(tmdbId, mediaType);
+
+    // Build result object (same shape as search results)
+    const result = {
+      id: tmdbId,
+      title: detail.title || detail.name,
+      name: detail.name,
+      media_type: mediaType,
+      poster_path: detail.poster_path,
+      backdrop_path: detail.backdrop_path,
+      overview: detail.overview || '',
+      vote_average: detail.vote_average,
+      release_date: detail.release_date,
+      first_air_date: detail.first_air_date,
+    };
+
+    // Pick first available flat service, fallback to rent/buy
+    let serviceId = null;
+    if (providers.flat.length > 0) serviceId = providers.flat[0];
+    else if (providers.rent.length > 0) serviceId = providers.rent[0];
+    else if (providers.buy.length > 0) serviceId = providers.buy[0];
+
+    if (!serviceId) {
+      showAutoAddToast(`„${getTitle(result)}" — kein Streaming-Dienst gefunden`, 'error');
+      cleanAutoAddParams();
+      return;
+    }
+
+    // Set state and add
+    selectedTmdb = result;
+    selectedService = serviceId;
+    availableServices = providers;
+    addItem();
+
+    const svc = SERVICES.find(s => s.id === serviceId);
+    showAutoAddToast(`✓ „${getTitle(result)}" hinzugefügt (${svc?.name || serviceId})`, 'success');
+  } catch (err) {
+    console.error('Auto-add error:', err);
+    showAutoAddToast('Fehler beim Hinzufügen', 'error');
+  }
+
+  cleanAutoAddParams();
+}
+
+function showAutoAddToast(message, type) {
+  let toast = document.getElementById('autoAddToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'autoAddToast';
+    Object.assign(toast.style, {
+      position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
+      padding: '14px 24px', borderRadius: '12px', fontSize: '15px', fontWeight: '500',
+      zIndex: '9999', color: '#fff', textAlign: 'center', maxWidth: '90vw',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.4)', transition: 'opacity 0.3s',
+    });
+    document.body.appendChild(toast);
+  }
+  const colors = { loading: '#555', success: '#1db954', error: '#e53935', info: '#2196f3' };
+  toast.style.background = colors[type] || '#555';
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  toast.style.display = 'block';
+
+  if (type !== 'loading') {
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => { toast.style.display = 'none'; }, 300); }, 3500);
+  }
+}
+
+function cleanAutoAddParams() {
+  const params = new URLSearchParams(window.location.search);
+  params.delete('add');
+  params.delete('type');
+  const newUrl = params.toString()
+    ? `${window.location.pathname}?${params.toString()}`
+    : window.location.pathname;
+  window.history.replaceState({}, '', newUrl);
 }
 
 // ---- Storage (Local) ----
