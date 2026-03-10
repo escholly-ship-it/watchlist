@@ -731,8 +731,8 @@ body {
 
 .detail-close {
   position: absolute;
-  top: -158px;
-  right: 0;
+  top: 12px;
+  right: 12px;
   width: 36px;
   height: 36px;
   border-radius: 50%;

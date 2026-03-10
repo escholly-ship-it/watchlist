@@ -704,10 +704,19 @@ async function openDetail(item) {
 
   const ratingPct = item.rating ? Math.round(item.rating * 10) : null;
 
+  // Close button — inject into .detail-modal (not $content) so it's not clipped by overflow:hidden
+  const $modal = $detailModal.querySelector('.detail-modal');
+  let $closeBtn = $modal.querySelector('.detail-close');
+  if (!$closeBtn) {
+    $closeBtn = document.createElement('button');
+    $closeBtn.className = 'detail-close';
+    $closeBtn.setAttribute('aria-label', 'Schließen');
+    $closeBtn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    $modal.appendChild($closeBtn);
+  }
+  $closeBtn.onclick = closeDetailModal;
+
   $content.innerHTML = `
-    <button class="detail-close" aria-label="Schließen">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
     ${svc ? `<div class="detail-service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
     <h2 class="detail-title">${esc(item.title)}</h2>
     <div class="detail-meta">
@@ -728,8 +737,6 @@ async function openDetail(item) {
   `;
 
   // Bind actions
-  $content.querySelector('.detail-close').addEventListener('click', closeDetailModal);
-
   $content.querySelector('.btn-watched').addEventListener('click', () => {
     item.watched = !item.watched;
     item.updatedAt = Date.now();
