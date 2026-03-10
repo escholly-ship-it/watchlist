@@ -709,6 +709,7 @@ async function openDetail(item) {
       <button class="btn-watched" data-id="${item.id}">
         ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
       </button>
+      <a class="btn-stream" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener">▶</a>
       <button class="btn-remove" data-id="${item.id}">Entfernen</button>
     </div>
   `;

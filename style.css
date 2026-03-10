@@ -824,6 +824,26 @@ body {
   background: rgba(229, 9, 20, 0.08);
 }
 
+.btn-stream {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 11px 0;
+  border-radius: var(--radius);
+  border: 1px solid rgba(70, 211, 105, 0.4);
+  background: transparent;
+  color: var(--green);
+  font-size: 1rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-stream:hover {
+  background: rgba(70, 211, 105, 0.1);
+}
+
 /* ---- Watched State ---- */
 .card.watched {
   opacity: 0.4;
