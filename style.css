@@ -69,11 +69,14 @@ body {
 .logo {
   font-size: 1.6rem;
   font-weight: 800;
-  color: var(--accent);
   letter-spacing: -0.5px;
   display: flex;
   align-items: center;
   gap: 8px;
+  background: linear-gradient(135deg, #e50914, #ff6b35, #e50914);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .sync-indicator {
