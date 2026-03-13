@@ -1,0 +1,24 @@
+name: Daily Watchlist Recommendations
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Täglich um 8:00 UTC
+  workflow_dispatch: # Manuell auslösbar
+
+jobs:
+  recommend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Send Slack recommendations
+        run: node .github/scripts/recommendations.mjs
+        env:
+          SYNC_URL: https://watchlist-sync.escholly.workers.dev/sync
+          API_KEY: ${{ secrets.API_KEY }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
