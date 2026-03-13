@@ -1,8 +1,13 @@
 // Watchlist Slack Recommendations — GitHub Action
 // Reads watchlist from repo JSON file, gets TMDB recommendations, sends to Slack
-// Only recommends content from 2025+
 
 import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const REPO_ROOT = join(__dirname, '..', '..');
 
 const TMDB_API_KEY = '1c0da1f5ff6aace3b668f89321b5c601';
 const SLACK_WEBHOOK_URL = Buffer.from('aHR0cHM6Ly9ob29rcy5zbGFjay5jb20vc2VydmljZXMvVDBBQ1FVNjdHNjQvQjBBS0tDWTg0ODEvZ2JlbzdQaTJBTjI1c0xGcUl1T3RoVDE2', 'base64').toString();
@@ -27,14 +32,24 @@ function isRecentContent(item) {
 }
 
 async function fetchJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`Fetch failed for ${url}: ${res.status}`);
+      return null;
+    }
+    return res.json();
+  } catch (err) {
+    console.error(`Fetch error for ${url}: ${err.message}`);
+    return null;
+  }
 }
 
 function loadWatchlist() {
+  const watchlistPath = join(REPO_ROOT, 'watchlist.json');
+  console.log(`Reading watchlist from: ${watchlistPath}`);
   try {
-    const data = readFileSync('watchlist.json', 'utf8');
+    const data = readFileSync(watchlistPath, 'utf8');
     const parsed = JSON.parse(data);
     return parsed.items || [];
   } catch (err) {
@@ -120,12 +135,42 @@ function buildSlackMessage(recommendations, watchlistCount) {
   return msg;
 }
 
+async function sendToSlack(message) {
+  console.log('Sending to Slack...');
+  console.log(`Webhook URL (masked): ${SLACK_WEBHOOK_URL.substring(0, 40)}...`);
+
+  try {
+    const slackRes = await fetch(SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message }),
+    });
+
+    const body = await slackRes.text();
+    console.log(`Slack response: ${slackRes.status} - ${body}`);
+
+    if (!slackRes.ok) {
+      console.error(`Slack send failed: ${slackRes.status} - ${body}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`Slack error: ${err.message}`);
+    return false;
+  }
+}
+
 async function main() {
-  console.log('Loading watchlist from watchlist.json...');
+  console.log('=== Watchlist Recommendations ===');
+  console.log(`Current directory: ${process.cwd()}`);
+  console.log(`Script directory: ${__dirname}`);
+  console.log(`Repo root: ${REPO_ROOT}`);
+
+  console.log('\nLoading watchlist...');
   const watchlist = loadWatchlist();
 
   if (watchlist.length === 0) {
-    console.error('No items in watchlist.json - please add some movies/shows first');
+    console.error('ERROR: No items in watchlist.json');
     process.exit(1);
   }
 
@@ -133,16 +178,19 @@ async function main() {
   console.log(`Found ${watchlist.length} items, ${unwatched.length} unwatched`);
 
   if (unwatched.length === 0) {
-    console.log('No unwatched items - skipping recommendations');
-    return;
+    console.log('No unwatched items - sending info message to Slack');
+    const sent = await sendToSlack(':white_check_mark: Alle Titel auf der Watchlist wurden geschaut!');
+    process.exit(sent ? 0 : 1);
   }
 
+  console.log('\nFetching TMDB recommendations...');
   const allRecs = [];
   const seenIds = new Set(watchlist.map(i => i.tmdbId));
 
   for (const item of unwatched.slice(0, 10)) {
-    console.log(`Getting recommendations for: ${item.title} (${item.type}/${item.tmdbId})`);
+    console.log(`  - ${item.title} (${item.type}/${item.tmdbId})`);
     const recs = await fetchRecommendations(item.tmdbId, item.type);
+    console.log(`    Found ${recs.length} recommendations`);
 
     for (const rec of recs) {
       if (seenIds.has(rec.id)) continue;
@@ -157,27 +205,20 @@ async function main() {
   }
 
   allRecs.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
-  console.log(`Found ${allRecs.length} recent recommendations (${MIN_RELEASE_YEAR}+)`);
+  console.log(`\nFound ${allRecs.length} recent recommendations (${MIN_RELEASE_YEAR}+)`);
 
   const message = buildSlackMessage(allRecs, unwatched.length);
+  const sent = await sendToSlack(message);
 
-  console.log('Sending to Slack...');
-  const slackRes = await fetch(SLACK_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: message }),
-  });
-
-  if (!slackRes.ok) {
-    const body = await slackRes.text();
-    console.error(`Slack send failed: ${slackRes.status} - ${body}`);
+  if (sent) {
+    console.log('\nDone! Recommendations sent to Slack.');
+  } else {
+    console.error('\nFailed to send to Slack');
     process.exit(1);
   }
-
-  console.log('Recommendations sent to Slack!');
 }
 
 main().catch(err => {
-  console.error(err);
+  console.error('Unhandled error:', err);
   process.exit(1);
 });
