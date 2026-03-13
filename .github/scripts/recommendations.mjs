@@ -82,6 +82,8 @@ function truncate(text, maxLen = 120) {
   return text.substring(0, maxLen - 1) + '...';
 }
 
+const WATCHLIST_APP_URL = 'https://escholly-ship-it.github.io/watchlist/';
+
 function formatRecommendation(rec, isTopPick) {
   const mediaEmoji = rec.mediaType === 'tv' ? ':tv:' : ':film_frames:';
   const title = rec.title || rec.name;
@@ -100,7 +102,8 @@ function formatRecommendation(rec, isTopPick) {
   if (overview) line += `${overview}\n`;
 
   const tmdbUrl = `https://www.themoviedb.org/${rec.mediaType}/${rec.id}`;
-  line += `<${tmdbUrl}|Details auf TMDB>\n\n`;
+  const addUrl = `${WATCHLIST_APP_URL}?add=${rec.id}&type=${rec.mediaType}`;
+  line += `<${tmdbUrl}|:mag: Details>  ·  <${addUrl}|:heavy_plus_sign: Watchlist>\n\n`;
 
   return line;
 }
