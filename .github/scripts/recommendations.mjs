@@ -10,7 +10,7 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..', '..');
 
 const TMDB_API_KEY = '1c0da1f5ff6aace3b668f89321b5c601';
-const SLACK_WEBHOOK_URL = Buffer.from('aHR0cHM6Ly9ob29rcy5zbGFjay5jb20vc2VydmljZXMvVDBBQ1FVNjdHNjQvQjBBS0tDWTg0ODEvZ2JlbzdQaTJBTjI1c0xGcUl1T3RoVDE2', 'base64').toString();
+const SLACK_WEBHOOK_URL = Buffer.from('aHR0cHM6Ly9ob29rcy5zbGFjay5jb20vc2VydmljZXMvVDBBQ1FVNjdHNjQvQjBBTE5LN05SMEMvOVVKNEFDcFFjcmVMQ0tVQUxBMFBGckZ2', 'base64').toString();
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const WATCH_REGION = 'DE';
