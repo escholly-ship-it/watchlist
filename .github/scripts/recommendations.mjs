@@ -1,9 +1,9 @@
 // Watchlist Slack Recommendations — GitHub Action
-// Fetches watchlist via Sync API, gets TMDB recommendations, sends to Slack
+// Reads watchlist from repo JSON file, gets TMDB recommendations, sends to Slack
 // Only recommends content from 2025+
 
-const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
-const API_KEY = 'UguJaxV_hRnY0utsdPvmFR0OZ7D-_QOVETxdYkBRbOw';
+import { readFileSync } from 'fs';
+
 const TMDB_API_KEY = '1c0da1f5ff6aace3b668f89321b5c601';
 const SLACK_WEBHOOK_URL = Buffer.from('aHR0cHM6Ly9ob29rcy5zbGFjay5jb20vc2VydmljZXMvVDBBQ1FVNjdHNjQvQjBBS0tDWTg0ODEvZ2JlbzdQaTJBTjI1c0xGcUl1T3RoVDE2', 'base64').toString();
 
@@ -32,13 +32,15 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-async function fetchWatchlist() {
-  const res = await fetch(SYNC_URL, {
-    headers: { 'X-API-Key': API_KEY },
-  });
-  if (!res.ok) throw new Error(`Watchlist fetch failed: ${res.status}`);
-  const data = await res.json();
-  return data.items || [];
+function loadWatchlist() {
+  try {
+    const data = readFileSync('watchlist.json', 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.items || [];
+  } catch (err) {
+    console.error('Failed to read watchlist.json:', err.message);
+    return [];
+  }
 }
 
 async function fetchRecommendations(tmdbId, mediaType) {
@@ -62,10 +64,10 @@ function formatProviders(providers) {
 
 function truncate(text, maxLen = 120) {
   if (!text || text.length <= maxLen) return text;
-  return text.substring(0, maxLen - 1) + '…';
+  return text.substring(0, maxLen - 1) + '...';
 }
 
-function formatRecommendation(rec, syncKey, isTopPick) {
+function formatRecommendation(rec, isTopPick) {
   const mediaEmoji = rec.mediaType === 'tv' ? ':tv:' : ':film_frames:';
   const title = rec.title || rec.name;
   const year = getYear(rec.release_date || rec.first_air_date);
@@ -73,23 +75,22 @@ function formatRecommendation(rec, syncKey, isTopPick) {
   const providers = formatProviders(rec.providers);
   const overview = truncate(rec.overview, isTopPick ? 200 : 100);
 
-  let line = `${mediaEmoji} *${title}* (${year}) · :star: ${rating}`;
-  if (providers) line += ` · ${providers}`;
+  let line = `${mediaEmoji} *${title}* (${year}) | :star: ${rating}`;
+  if (providers) line += ` | ${providers}`;
   line += '\n';
 
   if (rec.basedOn) {
-    line += `→ Weil du *${rec.basedOn}* auf deiner Watchlist hast\n`;
+    line += `_Weil du "${rec.basedOn}" magst_\n`;
   }
   if (overview) line += `${overview}\n`;
 
   const tmdbUrl = `https://www.themoviedb.org/${rec.mediaType}/${rec.id}`;
-  const addUrl = `https://escholly-ship-it.github.io/watchlist/?key=${syncKey}&add=${rec.id}&type=${rec.mediaType}`;
-  line += `<${tmdbUrl}|:mag: Details>  ·  <${addUrl}|:heavy_plus_sign: Watchlist>\n\n`;
+  line += `<${tmdbUrl}|Details auf TMDB>\n\n`;
 
   return line;
 }
 
-function buildSlackMessage(recommendations, watchlistCount, syncKey) {
+function buildSlackMessage(recommendations, watchlistCount) {
   const now = new Date();
   const dayName = GERMAN_DAYS[now.getDay()];
   const day = now.getDate().toString().padStart(2, '0');
@@ -97,22 +98,22 @@ function buildSlackMessage(recommendations, watchlistCount, syncKey) {
   const year = now.getFullYear();
 
   let msg = `:clapper: *Watchlist-Empfehlungen — ${dayName}, ${day}. ${month} ${year}*\n`;
-  msg += `${recommendations.length} Empfehlungen aus ${watchlistCount} gescannten Watchlist-Titeln\n`;
+  msg += `${recommendations.length} Empfehlungen aus ${watchlistCount} gescannten Titeln\n`;
   msg += `_Nur aktuelle Inhalte (${MIN_RELEASE_YEAR}+)_\n\n`;
 
   if (recommendations.length === 0) {
-    msg += `Keine aktuellen Empfehlungen gefunden. Alle Vorschläge waren älter als ${MIN_RELEASE_YEAR}.`;
+    msg += `Keine aktuellen Empfehlungen gefunden. Alle Vorschlaege waren aelter als ${MIN_RELEASE_YEAR}.`;
     return msg;
   }
 
   const topPick = recommendations[0];
   msg += `:star: *TOP PICK*\n`;
-  msg += formatRecommendation(topPick, syncKey, true);
+  msg += formatRecommendation(topPick, true);
 
   if (recommendations.length > 1) {
-    msg += `:red_circle: *EMPFEHLUNGEN*\n`;
+    msg += `:red_circle: *WEITERE EMPFEHLUNGEN*\n`;
     for (let i = 1; i < recommendations.length && i < 5; i++) {
-      msg += formatRecommendation(recommendations[i], syncKey, false);
+      msg += formatRecommendation(recommendations[i], false);
     }
   }
 
@@ -120,18 +121,19 @@ function buildSlackMessage(recommendations, watchlistCount, syncKey) {
 }
 
 async function main() {
-  if (!API_KEY || !TMDB_API_KEY || !SLACK_WEBHOOK_URL) {
-    console.error('Missing secrets: API_KEY, TMDB_API_KEY, or SLACK_WEBHOOK_URL');
+  console.log('Loading watchlist from watchlist.json...');
+  const watchlist = loadWatchlist();
+
+  if (watchlist.length === 0) {
+    console.error('No items in watchlist.json - please add some movies/shows first');
     process.exit(1);
   }
 
-  console.log('Fetching watchlist...');
-  const watchlist = await fetchWatchlist();
   const unwatched = watchlist.filter(item => !item.watched);
-  console.log(`Found ${unwatched.length} unwatched items`);
+  console.log(`Found ${watchlist.length} items, ${unwatched.length} unwatched`);
 
   if (unwatched.length === 0) {
-    console.log('No unwatched items — skipping');
+    console.log('No unwatched items - skipping recommendations');
     return;
   }
 
@@ -157,8 +159,9 @@ async function main() {
   allRecs.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
   console.log(`Found ${allRecs.length} recent recommendations (${MIN_RELEASE_YEAR}+)`);
 
-  const message = buildSlackMessage(allRecs, unwatched.length, API_KEY);
+  const message = buildSlackMessage(allRecs, unwatched.length);
 
+  console.log('Sending to Slack...');
   const slackRes = await fetch(SLACK_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -166,7 +169,8 @@ async function main() {
   });
 
   if (!slackRes.ok) {
-    console.error(`Slack send failed: ${slackRes.status}`);
+    const body = await slackRes.text();
+    console.error(`Slack send failed: ${slackRes.status} - ${body}`);
     process.exit(1);
   }
 
