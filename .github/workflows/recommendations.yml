@@ -2,7 +2,7 @@ name: Daily Watchlist Recommendations
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Täglich um 8:00 UTC
+    - cron: '0 17 * * *' # Täglich um 18:00 deutscher Zeit (17:00 UTC)
   workflow_dispatch: # Manuell auslösbar
 
 jobs:
