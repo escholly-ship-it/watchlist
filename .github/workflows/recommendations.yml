@@ -13,7 +13,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Send Slack recommendations
-        run: node .github/scripts/recommendations.mjs
+        run: node --experimental-vm-modules .github/scripts/recommendations.mjs
