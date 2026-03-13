@@ -17,8 +17,3 @@ jobs:
 
       - name: Send Slack recommendations
         run: node .github/scripts/recommendations.mjs
-        env:
-          SYNC_URL: https://watchlist-sync.escholly.workers.dev/sync
-          API_KEY: ${{ secrets.API_KEY }}
-          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
