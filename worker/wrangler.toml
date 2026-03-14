@@ -7,9 +7,9 @@ compatibility_date = "2024-01-01"
 binding = "WATCHLIST_KV"
 id = "YOUR_KV_NAMESPACE_ID"  # Run: wrangler kv:namespace create WATCHLIST_KV
 
-# Scheduled trigger for daily recommendations (8:00 UTC)
-[triggers]
-crons = ["0 8 * * *"]
+# Scheduled trigger disabled - recommendations handled by Cowork system
+# [triggers]
+# crons = ["0 8 * * *"]
 
 # Environment variables (secrets must be set via wrangler secret put)
 # Required secrets:

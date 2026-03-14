@@ -1,9 +1,12 @@
 name: Daily Watchlist Recommendations
 
+# DISABLED: Duplicate with Cowork watchlist recommendations system
+# See: https://scholly-workspace.slack.com/archives/C0AL0MBK0EL/p1773511028119139
+
 on:
-  schedule:
-    - cron: '0 17 * * *' # Täglich um 18:00 deutscher Zeit (17:00 UTC)
-  workflow_dispatch: # Manuell auslösbar
+  # schedule:
+  #   - cron: '0 17 * * *' # Täglich um 18:00 deutscher Zeit (17:00 UTC)
+  workflow_dispatch: # Manuell auslösbar (für Tests)
 
 jobs:
   recommend:
