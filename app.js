@@ -77,8 +77,12 @@ let selectedService = null;
 let availableServices = [];
 let searchTimeout = null;
 
+const SHORTLIST_MAX = 5;
+
 // ---- DOM ----
 const $watchlist = document.getElementById('watchlist');
+const $shortlistSection = document.getElementById('shortlistSection');
+const $shortlistTrack = document.getElementById('shortlistTrack');
 const $emptyState = document.getElementById('emptyState');
 const $filterBar = document.getElementById('filterBar');
 const $addModal = document.getElementById('addModal');
@@ -95,6 +99,7 @@ const $btnSave = document.getElementById('btnSave');
 async function init() {
   loadItemsLocal();
   renderFilterBar();
+  renderShortlist();
   renderWatchlist();
   bindEvents();
   // Sync from server (non-blocking)
@@ -283,6 +288,7 @@ async function pullFromServer() {
       items = remote;
       saveItemsLocal();
       renderFilterBar();
+      renderShortlist();
       renderWatchlist();
       setSyncStatus('synced');
     }
@@ -298,6 +304,226 @@ async function pullFromServer() {
 function saveItems() {
   saveItemsLocal();
   pushToServer(); // async, non-blocking
+}
+
+// ---- Shortlist Logic ----
+function getShortlistItems() {
+  return items
+    .filter(i => i.shortlist != null)
+    .sort((a, b) => a.shortlist - b.shortlist);
+}
+
+function addToShortlist(itemId) {
+  const current = getShortlistItems();
+  if (current.length >= SHORTLIST_MAX) return false;
+  const item = items.find(i => i.id === itemId);
+  if (!item || item.shortlist != null) return false;
+  item.shortlist = current.length;
+  item.updatedAt = Date.now();
+  saveItems();
+  renderShortlist();
+  return true;
+}
+
+function removeFromShortlist(itemId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item || item.shortlist == null) return;
+  item.shortlist = null;
+  item.updatedAt = Date.now();
+  // Re-index remaining positions
+  getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+  saveItems();
+  renderShortlist();
+}
+
+function reorderShortlist(fromIndex, toIndex) {
+  const list = getShortlistItems();
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+  if (fromIndex >= list.length || toIndex >= list.length) return;
+  const [moved] = list.splice(fromIndex, 1);
+  list.splice(toIndex, 0, moved);
+  list.forEach((it, idx) => { it.shortlist = idx; });
+  saveItems();
+  renderShortlist();
+}
+
+function isOnShortlist(itemId) {
+  const item = items.find(i => i.id === itemId);
+  return item && item.shortlist != null;
+}
+
+function isShortlistFull() {
+  return getShortlistItems().length >= SHORTLIST_MAX;
+}
+
+// ---- Render: Shortlist ----
+function renderShortlist() {
+  const list = getShortlistItems();
+
+  if (list.length === 0) {
+    $shortlistSection.classList.add('hidden');
+    return;
+  }
+
+  $shortlistSection.classList.remove('hidden');
+  $shortlistTrack.innerHTML = '';
+
+  list.forEach((item, idx) => {
+    const card = document.createElement('div');
+    card.className = 'shortlist-card';
+    card.dataset.id = item.id;
+    card.dataset.index = idx;
+    card.draggable = true;
+
+    const svc = SERVICES.find(s => s.id === item.serviceId);
+
+    card.innerHTML = `
+      ${item.poster
+        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${esc(item.title)}" loading="lazy">`
+        : `<div class="shortlist-no-poster">🎬</div>`
+      }
+      ${svc ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
+      <button class="shortlist-remove" aria-label="Entfernen">×</button>
+      <div class="shortlist-overlay">
+        <div class="shortlist-card-title">${esc(item.title)}</div>
+      </div>
+    `;
+
+    // Remove button
+    card.querySelector('.shortlist-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeFromShortlist(item.id);
+    });
+
+    // Open detail on click
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.shortlist-remove')) return;
+      openDetail(item);
+    });
+
+    $shortlistTrack.appendChild(card);
+  });
+
+  bindShortlistDragDrop();
+}
+
+// ---- Shortlist Drag & Drop ----
+function bindShortlistDragDrop() {
+  let dragIdx = null;
+  let dragGhost = null;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let isDragging = false;
+
+  const cards = $shortlistTrack.querySelectorAll('.shortlist-card');
+
+  cards.forEach(card => {
+    // --- Desktop drag ---
+    card.addEventListener('dragstart', (e) => {
+      dragIdx = parseInt(card.dataset.index);
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Transparent drag image (we style via CSS)
+      const img = new Image();
+      img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      e.dataTransfer.setDragImage(img, 0, 0);
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      dragIdx = null;
+      cards.forEach(c => c.classList.remove('drag-over'));
+    });
+
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      cards.forEach(c => c.classList.remove('drag-over'));
+      card.classList.add('drag-over');
+    });
+
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const toIdx = parseInt(card.dataset.index);
+      if (dragIdx != null && dragIdx !== toIdx) {
+        reorderShortlist(dragIdx, toIdx);
+      }
+      cards.forEach(c => c.classList.remove('drag-over'));
+    });
+
+    // --- Touch drag ---
+    card.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      isDragging = false;
+      dragIdx = parseInt(card.dataset.index);
+
+      // Start drag after a small hold
+      card._holdTimer = setTimeout(() => {
+        isDragging = true;
+        card.classList.add('dragging');
+        // Create ghost
+        dragGhost = card.cloneNode(true);
+        dragGhost.classList.add('shortlist-ghost');
+        dragGhost.style.width = card.offsetWidth + 'px';
+        dragGhost.style.height = card.offsetHeight + 'px';
+        document.body.appendChild(dragGhost);
+        positionGhost(touch);
+      }, 200);
+    }, { passive: true });
+
+    card.addEventListener('touchmove', (e) => {
+      if (!isDragging) {
+        // Cancel hold if finger moved too far before drag started
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - touchStartX);
+        const dy = Math.abs(touch.clientY - touchStartY);
+        if (dx > 10 || dy > 10) {
+          clearTimeout(card._holdTimer);
+        }
+        return;
+      }
+      e.preventDefault();
+      const touch = e.touches[0];
+      positionGhost(touch);
+
+      // Highlight target card
+      cards.forEach(c => c.classList.remove('drag-over'));
+      const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.shortlist-card');
+      if (target && target !== card) {
+        target.classList.add('drag-over');
+      }
+    }, { passive: false });
+
+    card.addEventListener('touchend', (e) => {
+      clearTimeout(card._holdTimer);
+      if (!isDragging) { dragIdx = null; return; }
+
+      const touch = e.changedTouches[0];
+      const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.shortlist-card');
+
+      if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+      card.classList.remove('dragging');
+      cards.forEach(c => c.classList.remove('drag-over'));
+
+      if (target && target !== card) {
+        const toIdx = parseInt(target.dataset.index);
+        if (dragIdx != null && dragIdx !== toIdx) {
+          reorderShortlist(dragIdx, toIdx);
+        }
+      }
+
+      isDragging = false;
+      dragIdx = null;
+    });
+  });
+
+  function positionGhost(touch) {
+    if (!dragGhost) return;
+    dragGhost.style.left = (touch.clientX - dragGhost.offsetWidth / 2) + 'px';
+    dragGhost.style.top = (touch.clientY - dragGhost.offsetHeight / 2) + 'px';
+  }
 }
 
 function exportData() {
@@ -703,6 +929,9 @@ async function openDetail(item) {
     ${item.overview ? `<p class="detail-overview">${esc(item.overview)}</p>` : ''}
     <div id="detailProviders"></div>
     <div class="detail-actions">
+      ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
+        ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
+      </button>` : ''}
       <button class="btn-watched" data-id="${item.id}">
         ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
       </button>
@@ -712,18 +941,40 @@ async function openDetail(item) {
   `;
 
   // Bind actions
+  const $shortlistBtn = $content.querySelector('.btn-shortlist');
+  if ($shortlistBtn) {
+    $shortlistBtn.addEventListener('click', () => {
+      if (isOnShortlist(item.id)) {
+        removeFromShortlist(item.id);
+      } else {
+        addToShortlist(item.id);
+      }
+      closeDetailModal();
+      renderWatchlist();
+    });
+  }
+
   $content.querySelector('.btn-watched').addEventListener('click', () => {
     item.watched = !item.watched;
     item.updatedAt = Date.now();
+    // Remove from shortlist when marked as watched
+    if (item.watched && item.shortlist != null) {
+      item.shortlist = null;
+      getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+    }
     saveItems();
     closeDetailModal();
+    renderShortlist();
     renderWatchlist();
   });
 
   $content.querySelector('.btn-remove').addEventListener('click', () => {
     items = items.filter(i => i.id !== item.id);
+    // Re-index shortlist after removal
+    getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
     saveItems();
     closeDetailModal();
+    renderShortlist();
     renderFilterBar();
     renderWatchlist();
   });
