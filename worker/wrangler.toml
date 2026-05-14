@@ -1,18 +1,28 @@
-name = "watchlist-api"
+name = "watchlist-sync"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
 
-# KV Namespace binding - replace with your actual KV namespace ID
+# KV Namespace binding.
+# Set the real ID via `wrangler kv namespace list` after `wrangler login`,
+# then replace the placeholder below before deploy.
 [[kv_namespaces]]
 binding = "WATCHLIST_KV"
-id = "YOUR_KV_NAMESPACE_ID"  # Run: wrangler kv:namespace create WATCHLIST_KV
+id = "REPLACE_WITH_PROD_WATCHLIST_KV_ID"
 
-# Scheduled trigger for daily recommendations (8:00 UTC)
+# Daily recommendation pipeline — 16:35 UTC = 18:35 MESZ (Sommerzeit)
+# Plan B (2026-05-14): consolidates Mac LaunchAgent + GHA + CC-routine into the worker.
 [triggers]
-crons = ["0 8 * * *"]
+crons = ["35 16 * * *"]
 
-# Environment variables (secrets must be set via wrangler secret put)
-# Required secrets:
-#   wrangler secret put API_KEY
-#   wrangler secret put TMDB_API_KEY
-#   wrangler secret put SLACK_WEBHOOK_URL
+# Observability — make `wrangler tail` show structured logs.
+[observability]
+enabled = true
+
+# ── Required secrets (set via `wrangler secret put <NAME>`) ────────────────
+# API_KEY              — legacy owner-key for /sync endpoint (PWA, optional)
+# ADMIN_KEY            — gate for POST /recommend manual trigger
+# OWNER_SYNC_KEY       — Scholly's 32-char sync-key; used as KV-namespace owner
+# TMDB_API_KEY         — TMDB v3 API key
+# TELEGRAM_BOT_TOKEN   — Telegram bot token
+# TELEGRAM_CHAT_ID     — Telegram chat ID (recipient)
