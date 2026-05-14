@@ -86,8 +86,16 @@ const MIN_VOTES = 20;
 const LOOKBACK_DAYS = 28;
 const LOOKAHEAD_DAYS = 90;
 const MEDIUM_THRESHOLD = 0.35;  // User-Decision 2026-05-14
-const TASTE_SAMPLE_SIZE = 30;
+const TASTE_SAMPLE_SIZE = 15;   // Weekly cron only; daily cron reads KV cache.
 const TELEGRAM_CHUNK_LIMIT = 4000;
+
+// Subrequest budget on Workers Free is 50/invocation. Tight knobs below stay
+// well under that for the daily run (taste profile is cached weekly).
+const POPULAR_TOP_PROVIDERS = 5;   // Only top-5 providers for "Heute streamen"
+const POPULAR_MEDIA_TYPES = ['movie']; // Skip TV in popular pass — covered by Secondary
+const NEW_RELEASE_PAGES = 1;       // 1 page × 2 media types = 2 calls
+const ENRICH_CHECK_FACTOR = 2;     // limit × N candidates to provider-check
+const TASTE_CACHE_TTL_DAYS = 8;    // Refreshed weekly; soft refresh window 8d
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP entrypoints
@@ -103,6 +111,23 @@ export default {
 
     if (url.pathname === '/recommend' && request.method === 'POST') {
       return handleRecommendTrigger(request, env, ctx, url);
+    }
+
+    if (url.pathname === '/rebuild-taste' && request.method === 'POST') {
+      const adminKey = request.headers.get('X-Admin-Key');
+      if (!env.ADMIN_KEY || adminKey !== env.ADMIN_KEY) {
+        return jsonResponse({ error: 'Unauthorized' }, 401);
+      }
+      await rebuildTasteProfileCache(env);
+      const cached = await env.WATCHLIST_KV.get(tasteCacheKey(env), 'json');
+      return jsonResponse({
+        ok: true,
+        ts: cached && cached.ts,
+        genres: cached && cached.profile && Object.keys(cached.profile.genres).length,
+        decades: cached && cached.profile && Object.keys(cached.profile.decades).length,
+        cast: cached && cached.profile && Object.keys(cached.profile.cast).length,
+        avg_rating: cached && cached.profile && cached.profile.avg_rating,
+      });
     }
 
     // /sync routes — owner-scoped via X-API-Key
@@ -139,8 +164,14 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Cron entrypoint — see wrangler.toml [triggers].crons
-    ctx.waitUntil(runRecommendationPipeline(env, { dryRun: false, source: 'cron' }));
+    // Two cron schedules — see wrangler.toml [triggers].crons:
+    //   "35 16 * * *"  → daily recommendation run
+    //   "0 3 * * 0"    → weekly taste-profile rebuild (Sunday 03:00 UTC)
+    if (event.cron === '0 3 * * SUN') {
+      ctx.waitUntil(rebuildTasteProfileCache(env));
+    } else {
+      ctx.waitUntil(runRecommendationPipeline(env, { dryRun: false, source: 'cron' }));
+    }
   },
 };
 
@@ -192,7 +223,7 @@ async function runRecommendationPipeline(env, { dryRun, source }) {
         .map((it) => `${it.type || 'movie'}_${it.tmdbId}`)
     );
 
-    const taste = await buildTasteProfile(watchlist, env);
+    const taste = await loadOrBuildTasteProfile(watchlist, env, note);
     const topGenres = Object.entries(taste.genres)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
@@ -321,15 +352,19 @@ async function tmdbGet(path, params, env) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
   }
+  // Cache TTL deliberately short: TMDB results we care about (discover, providers)
+  // change over the day, and a cached empty response would poison the pipeline.
+  // 60 s is enough to coalesce duplicate calls within a single scheduled invocation.
   try {
-    const resp = await fetch(url.toString(), { cf: { cacheTtl: 300 } });
+    const resp = await fetch(url.toString(), { cf: { cacheTtl: 60, cacheEverything: true } });
     if (!resp.ok) {
-      console.error(`TMDB ${path} → HTTP ${resp.status}`);
+      const body = await resp.text().catch(() => '');
+      console.error(`TMDB ${path} → HTTP ${resp.status}: ${body.slice(0, 200)}`);
       return null;
     }
     return await resp.json();
   } catch (err) {
-    console.error(`TMDB ${path} error:`, err);
+    console.error(`TMDB ${path} error:`, err && err.message ? err.message : String(err));
     return null;
   }
 }
@@ -337,6 +372,49 @@ async function tmdbGet(path, params, env) {
 // ─────────────────────────────────────────────────────────────────────────
 // Taste profile (Sprint 262 multi-factor: genres + decades + cast + avg_rating)
 // ─────────────────────────────────────────────────────────────────────────
+
+function tasteCacheKey(env) {
+  return `taste:${env.OWNER_SYNC_KEY}`;
+}
+
+async function loadOrBuildTasteProfile(watchlist, env, note) {
+  const cached = await env.WATCHLIST_KV.get(tasteCacheKey(env), 'json');
+  if (cached && cached.ts && cached.profile) {
+    const ageDays = (Date.now() / 1000 - cached.ts) / 86400;
+    if (ageDays < TASTE_CACHE_TTL_DAYS) {
+      note(`Taste profile: KV cache hit (${ageDays.toFixed(1)}d old)`);
+      return cached.profile;
+    }
+    note(`Taste profile: KV cache stale (${ageDays.toFixed(1)}d old) — rebuilding inline`);
+  } else {
+    note('Taste profile: no KV cache — building inline');
+  }
+  // Inline build (only on cold start / cache-stale day; weekly cron normally
+  // keeps cache fresh and we never hit this branch from the daily run).
+  const profile = await buildTasteProfile(watchlist, env);
+  await env.WATCHLIST_KV.put(
+    tasteCacheKey(env),
+    JSON.stringify({ profile, ts: Math.floor(Date.now() / 1000) }),
+  );
+  return profile;
+}
+
+async function rebuildTasteProfileCache(env) {
+  console.log('Weekly taste-profile rebuild starting');
+  requireSecret(env, 'OWNER_SYNC_KEY');
+  requireSecret(env, 'TMDB_API_KEY');
+  const watchlist = await loadOwnerWatchlist(env);
+  if (watchlist.length === 0) {
+    console.log('Watchlist empty — skipping taste-profile rebuild');
+    return;
+  }
+  const profile = await buildTasteProfile(watchlist, env);
+  await env.WATCHLIST_KV.put(
+    tasteCacheKey(env),
+    JSON.stringify({ profile, ts: Math.floor(Date.now() / 1000) }),
+  );
+  console.log(`Taste profile rebuilt and cached: genres=${Object.keys(profile.genres).length} decades=${Object.keys(profile.decades).length} cast=${Object.keys(profile.cast).length}`);
+}
 
 async function buildTasteProfile(watchlist, env) {
   const sample = sampleRandom(
@@ -456,9 +534,11 @@ function itemKey(item) {
 // ─────────────────────────────────────────────────────────────────────────
 
 async function fetchPopularPerProvider(env) {
+  // Subrequest-budget cap: only top N providers × restricted media types.
+  const providers = DISTINCT_PROVIDER_IDS.slice(0, POPULAR_TOP_PROVIDERS);
   const tasks = [];
-  for (const pid of DISTINCT_PROVIDER_IDS) {
-    for (const mediaType of ['movie', 'tv']) {
+  for (const pid of providers) {
+    for (const mediaType of POPULAR_MEDIA_TYPES) {
       tasks.push(fetchPopularForProvider(pid, mediaType, env));
     }
   }
@@ -493,7 +573,7 @@ async function fetchNewReleases(env) {
 
   const tasks = [];
   for (const mediaType of ['movie', 'tv']) {
-    for (let page = 1; page <= 3; page++) {
+    for (let page = 1; page <= NEW_RELEASE_PAGES; page++) {
       tasks.push(fetchNewReleasesPage(mediaType, dateFrom, dateTo, page, env));
     }
   }
@@ -588,12 +668,19 @@ function scoreAndFilter(items, taste, watchlistIds, recommended) {
 }
 
 async function enrichWithProviders(scored, env, limit) {
-  const checkLimit = Math.min(scored.length, limit * 5);
+  const checkLimit = Math.min(scored.length, limit * ENRICH_CHECK_FACTOR);
   const out = [];
+  let probedNoProviders = 0;
   for (let i = 0; i < checkLimit && out.length < limit; i++) {
     const c = scored[i];
     const providers = await getStreamingProviders(c.type, c.tmdb_id, env);
-    if (providers.length === 0) continue;
+    if (providers.length === 0) {
+      probedNoProviders++;
+      if (probedNoProviders <= 3) {
+        console.log(`enrich: no providers for ${c.type}/${c.tmdb_id} (${c.title})`);
+      }
+      continue;
+    }
     const year = c.release_date ? c.release_date.slice(0, 4) : '';
     const genres = c.genre_ids.slice(0, 3).map((g) => GENRE_MAP[g]).filter(Boolean).join(', ');
     out.push({

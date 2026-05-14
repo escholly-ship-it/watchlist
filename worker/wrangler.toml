@@ -8,12 +8,14 @@ compatibility_flags = ["nodejs_compat"]
 # then replace the placeholder below before deploy.
 [[kv_namespaces]]
 binding = "WATCHLIST_KV"
-id = "REPLACE_WITH_PROD_WATCHLIST_KV_ID"
+id = "d21a31cf2f614d05a1d5767954abc5c6"
 
 # Daily recommendation pipeline — 16:35 UTC = 18:35 MESZ (Sommerzeit)
+# Weekly taste-profile rebuild — Sunday 03:00 UTC (off-peak, refreshes KV cache)
 # Plan B (2026-05-14): consolidates Mac LaunchAgent + GHA + CC-routine into the worker.
+# Two-cron split keeps each invocation under the Workers Free 50-subrequest cap.
 [triggers]
-crons = ["35 16 * * *"]
+crons = ["35 16 * * *", "0 3 * * SUN"]
 
 # Observability — make `wrangler tail` show structured logs.
 [observability]
