@@ -91,11 +91,18 @@ const TELEGRAM_CHUNK_LIMIT = 4000;
 
 // Subrequest budget on Workers Free is 50/invocation. Tight knobs below stay
 // well under that for the daily run (taste profile is cached weekly).
-const POPULAR_TOP_PROVIDERS = 5;   // Only top-5 providers for "Heute streamen"
-const POPULAR_MEDIA_TYPES = ['movie']; // Skip TV in popular pass — covered by Secondary
-const NEW_RELEASE_PAGES = 1;       // 1 page × 2 media types = 2 calls
-const ENRICH_CHECK_FACTOR = 2;     // limit × N candidates to provider-check
-const TASTE_CACHE_TTL_DAYS = 8;    // Refreshed weekly; soft refresh window 8d
+const POPULAR_TOP_PROVIDERS = 5;             // Only top-5 providers for "Heute streamen"
+const POPULAR_MEDIA_TYPES = ['movie', 'tv']; // Both for Primary section
+const NEW_RELEASE_PAGES = 1;                 // 1 page × 2 media types = 2 calls
+const ENRICH_CHECK_FACTOR = 2;               // limit × N candidates to provider-check
+const TASTE_CACHE_TTL_DAYS = 8;              // Refreshed weekly; soft refresh window 8d
+
+// Original-language preference (Scholly watches OV only).
+// Items in these languages keep full score; others are penalised so that
+// average-matches drop below MEDIUM but a really strong taste-match in a
+// non-preferred language can still surface.
+const PREFERRED_LANGUAGES = new Set(['en', 'de', 'sv']);
+const NON_PREFERRED_LANG_FACTOR = 0.5;
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP entrypoints
@@ -233,13 +240,20 @@ async function runRecommendationPipeline(env, { dryRun, source }) {
     const recommended = await loadDedupState(env);
     note(`Dedup state: ${Object.keys(recommended).length} entries (last ${DEDUP_DAYS}d)`);
 
-    // ── Primary: "Heute streamen" — popular per provider ──
+    // ── Primary: "Heute streamen" — popular per provider, balanced 50/50 ──
     const primaryRaw = await fetchPopularPerProvider(env);
     note(`Primary raw candidates: ${primaryRaw.length}`);
     const primaryScored = scoreAndFilter(primaryRaw, taste, watchlistIds, recommended);
-    note(`Primary after MEDIUM filter (>= ${MEDIUM_THRESHOLD}): ${primaryScored.length}`);
-    const primaryFinal = await enrichWithProviders(primaryScored, env, MAX_PRIMARY);
-    note(`Primary final: ${primaryFinal.length}`);
+    const moviePool = primaryScored.filter((it) => it.type === 'movie');
+    const tvPool = primaryScored.filter((it) => it.type === 'tv');
+    note(`Primary after MEDIUM filter (>= ${MEDIUM_THRESHOLD}): ${primaryScored.length} (movie=${moviePool.length}, tv=${tvPool.length})`);
+    const movieHalf = Math.floor(MAX_PRIMARY / 2);
+    const tvHalf = MAX_PRIMARY - movieHalf;
+    const primaryMovies = await enrichWithProviders(moviePool, env, movieHalf);
+    const primaryTv = await enrichWithProviders(tvPool, env, tvHalf);
+    // Interleave movie/tv so the section reads as a mix, not two blocks
+    const primaryFinal = interleave(primaryMovies, primaryTv);
+    note(`Primary final: ${primaryFinal.length} (movie=${primaryMovies.length}, tv=${primaryTv.length})`);
 
     // ── Secondary: "Neuerscheinungen" — discover by release_date ──
     const secondaryRaw = await fetchNewReleases(env);
@@ -513,7 +527,10 @@ function scoreWithTaste(item, taste) {
   const rating = typeof item.vote_average === 'number' ? item.vote_average : 6.5;
   const rScore = Math.max(0, 1 - Math.abs(rating - taste.avg_rating) / 5);
 
-  return Math.round((0.4 * gScore + 0.2 * dScore + 0.2 * cScore + 0.2 * rScore) * 1000) / 1000;
+  const base = 0.4 * gScore + 0.2 * dScore + 0.2 * cScore + 0.2 * rScore;
+  const lang = (item.original_language || '').toLowerCase();
+  const langFactor = PREFERRED_LANGUAGES.has(lang) ? 1.0 : NON_PREFERRED_LANG_FACTOR;
+  return Math.round(base * langFactor * 1000) / 1000;
 }
 
 function parseReleaseYear(item) {
@@ -617,6 +634,7 @@ function normalizeDiscoverItem(r, mediaType) {
     release_date: r.release_date || r.first_air_date || '',
     release_year: parseReleaseYear(r),
     popularity: r.popularity || 0,
+    original_language: r.original_language || '',
     cast_ids: [], // populated lazily — discover endpoint has no cast
   };
 }
@@ -855,5 +873,15 @@ function addDays(d, n) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function interleave(a, b) {
+  const out = [];
+  const max = Math.max(a.length, b.length);
+  for (let i = 0; i < max; i++) {
+    if (i < a.length) out.push(a[i]);
+    if (i < b.length) out.push(b[i]);
+  }
+  return out;
 }
 
