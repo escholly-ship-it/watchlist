@@ -10,6 +10,14 @@ const STORAGE_KEY = 'watchlist_items';
 const WATCH_REGION = 'DE';
 
 // ---- Sync Configuration ----
+/**
+ * @design SYNC_KEY: Bewusst URL-exponiertes Bearer-Token, kein httpOnly-Cookie.
+ * Begruendung: Share-URL-Pattern ('?key=...'), niedrig-sensible Daten (nur
+ * Watchlist-Filmtitel, kein PII/Finance). httpOnly-Cookie-Migration wuerde
+ * Share-Pattern brechen. localStorage-Persistenz nur als UX-Fallback fuer
+ * iOS-Homescreen-Bookmarks.
+ * Cross-Ref: Sprint 304 sessionStorage-Audit (4 SYNC_KEY-Hits), Sprint 305 WL-8.
+ */
 const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
 let syncStatus = 'idle'; // idle | syncing | synced | error
 
