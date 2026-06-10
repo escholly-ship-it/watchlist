@@ -17,8 +17,10 @@
 // WL-5 (2026-06-11): Wochen-Magazin ersetzt die taegliche Telegram-Empfehlung.
 //   Kein popular-per-provider-Katalogbestand mehr — nur Neuerscheinungen
 //   (letzte 30d) + Demnaechst (naechste 14d), taste-ranked, als Magazin-JSON
-//   in KV. Die App rendert das Magazin; Telegram sendet nur noch einen
-//   Wochen-Ping. Subrequest-Budget hart gedeckelt (Free-Tier 50/Invocation).
+//   in KV. Die App rendert das Magazin und IST die Benachrichtigung (Teaser
+//   beim Oeffnen) — Telegram nur noch im Fehlerfall (silent-stale-Schutz,
+//   Customer-Entscheid 2026-06-11). Subrequest-Budget hart gedeckelt
+//   (Free-Tier 50/Invocation).
 // Plan B (2026-05-14): Producer-Konsolidierung Mac/GHA/CC → Worker als
 //   single source. Match-Schwelle MEDIUM = scoreWithTaste >= 0.35.
 
@@ -85,7 +87,6 @@ const GENRE_MAP = {
   10767: 'Talk', 10768: 'Krieg & Politik',
 };
 
-const WATCHLIST_APP_URL = 'https://escholly-ship-it.github.io/watchlist/';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 
 const MIN_RATING = 5.5;
@@ -233,10 +234,6 @@ async function runMagazinePipeline(env, { dryRun, source }) {
   try {
     requireSecret(env, 'OWNER_SYNC_KEY');
     requireSecret(env, 'TMDB_API_KEY');
-    if (!dryRun) {
-      requireSecret(env, 'TELEGRAM_BOT_TOKEN');
-      requireSecret(env, 'TELEGRAM_CHAT_ID');
-    }
 
     const watchlist = await loadOwnerWatchlist(env);
     note(`Watchlist: ${watchlist.length} items`);
@@ -299,8 +296,7 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     const subrequests = {
       tmdb: tmdbCalls,
       kv_est: 8,
-      telegram: dryRun ? 0 : 1,
-      total_est: tmdbCalls + 8 + (dryRun ? 0 : 1),
+      total_est: tmdbCalls + 8,
     };
 
     if (neuItems.length === 0 && upItems.length === 0) {
@@ -339,13 +335,9 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     }
     await saveMagazineSeen(env, seen);
 
-    const appLink = `${WATCHLIST_APP_URL}?key=${encodeURIComponent(env.OWNER_SYNC_KEY)}&magazin=1`;
-    const ping = [
-      `📖 <b>Streaming-Woche Nr. ${issueWeek}</b> — dein Wochen-Magazin ist da`,
-      `${neuItems.length} neue Titel · ${upItems.length} Ausblicke, kuratiert fuer deinen Geschmack`,
-      `<a href="${escapeHtml(appLink)}">→ Magazin oeffnen</a>`,
-    ].join('\n');
-    await postTelegram(ping, env);
+    // Customer-Entscheid 2026-06-11: kein Erfolgs-Ping — die App selbst zeigt
+    // die neue Ausgabe beim Oeffnen (Teaser-Karte). Telegram nur im Fehlerfall
+    // (silent-stale-Schutz). Web-Push in der App: Backlog WL-10.
 
     return {
       ok: true,
@@ -894,14 +886,6 @@ function splitTelegramMessage(message, maxLen) {
   }
   if (current) chunks.push(current);
   return chunks;
-}
-
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

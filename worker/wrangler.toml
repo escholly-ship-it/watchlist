@@ -26,5 +26,5 @@ enabled = true
 # ADMIN_KEY            — gate for POST /magazine-build manual trigger
 # OWNER_SYNC_KEY       — Scholly's 32-char sync-key; used as KV-namespace owner
 # TMDB_API_KEY         — TMDB v3 API key
-# TELEGRAM_BOT_TOKEN   — Telegram bot token
+# TELEGRAM_BOT_TOKEN   — Telegram bot token (nur Fehler-Ping, kein Erfolgs-Ping)
 # TELEGRAM_CHAT_ID     — Telegram chat ID (recipient)
