@@ -117,6 +117,10 @@ async function init() {
   if (autoAdd.tmdbId && autoAdd.mediaType) {
     await handleAutoAdd(autoAdd.tmdbId, autoAdd.mediaType);
   }
+  // Wochen-Magazin (WL-5)
+  await fetchMagazine();
+  renderMagazineTeaser();
+  maybeAutoOpenMagazine();
 }
 
 // ---- Auto-Add via URL ----
@@ -1138,6 +1142,245 @@ function bindEvents() {
     }
   });
 }
+
+// ---- Wochen-Magazin (WL-5) ----
+const MAGAZINE_URL = 'https://watchlist-sync.escholly.workers.dev/magazine';
+let magazine = null;
+
+const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+
+async function fetchMagazine() {
+  if (!SYNC_ENABLED) return;
+  try {
+    const res = await fetch(MAGAZINE_URL, { headers: { 'X-API-Key': SYNC_KEY } });
+    if (!res.ok) return;
+    const data = await res.json();
+    magazine = data.magazine || null;
+  } catch (err) {
+    console.error('Magazine fetch error:', err);
+  }
+}
+
+function magazineItems() {
+  if (!magazine || !Array.isArray(magazine.sections)) return [];
+  return magazine.sections.flatMap(s => (s.items || []).map(it => ({ ...it, _section: s.id })));
+}
+
+function formatIssueDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()}. ${GERMAN_MONTHS[d.getMonth()]}`;
+}
+
+function formatShortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+}
+
+function renderMagazineTeaser() {
+  const $teaser = document.getElementById('magazineTeaser');
+  if (!$teaser) return;
+  const all = magazineItems();
+  if (all.length === 0) { $teaser.classList.add('hidden'); return; }
+
+  const thumbs = all.slice(0, 3)
+    .map(it => {
+      const url = tmdbPoster(it.poster_path, 'w185');
+      return url ? `<img class="mag-teaser-thumb" src="${esc(url)}" alt="" loading="lazy">` : '';
+    }).join('');
+
+  const neu = (magazine.counts && magazine.counts.neu) || 0;
+  const dem = (magazine.counts && magazine.counts.demnaechst) || 0;
+  const week = magazine.issue ? magazine.issue.week : '';
+  $teaser.innerHTML = `
+    <div class="mag-teaser-card" id="magTeaserCard" role="button" tabindex="0" aria-label="Wochen-Magazin öffnen">
+      <div class="mag-teaser-head">
+        <span class="mag-teaser-label">Streaming-Woche</span>
+        <span class="mag-teaser-issue">Nr. ${esc(String(week))} · ${esc(formatIssueDate(magazine.issue && magazine.issue.date))}</span>
+      </div>
+      <p class="mag-teaser-title">Dein Wochen-Magazin</p>
+      <p class="mag-teaser-sub">${neu} neue Titel${dem ? ` · ${dem} Ausblicke` : ''}, kuratiert für deinen Geschmack</p>
+      <div class="mag-teaser-thumbs">${thumbs}</div>
+      <button class="mag-teaser-btn">Magazin lesen</button>
+    </div>`;
+  $teaser.classList.remove('hidden');
+  const card = document.getElementById('magTeaserCard');
+  card.addEventListener('click', openMagazineReader);
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMagazineReader(); }
+  });
+}
+
+function maybeAutoOpenMagazine() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('magazin') !== '1') return;
+  params.delete('magazin');
+  const newUrl = params.toString()
+    ? `${window.location.pathname}?${params.toString()}`
+    : window.location.pathname;
+  window.history.replaceState({}, '', newUrl);
+  if (magazineItems().length > 0) openMagazineReader();
+}
+
+function genreBadgeColor(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('krimi') || n.includes('thriller')) return '#e50914';
+  if (n.includes('drama')) return '#2f6fd6';
+  if (n.includes('sci') || n.includes('fantasy')) return '#0f6e56';
+  if (n.includes('komödie') || n.includes('comedy')) return '#df7412';
+  if (n.includes('doku')) return '#2f8f4e';
+  if (n.includes('horror') || n.includes('mystery')) return '#534ab7';
+  if (n.includes('action') || n.includes('abenteuer') || n.includes('adventure')) return '#b3401d';
+  if (n.includes('liebe') || n.includes('romantik') || n.includes('romance')) return '#993556';
+  if (n.includes('animation') || n.includes('familie')) return '#1d9e75';
+  return '#2d3449';
+}
+
+function magazineCardHtml(it, i) {
+  const backdrop = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
+  const genre = (it.genres && it.genres[0]) || (it.type === 'tv' ? 'Serie' : 'Film');
+  const onList = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
+
+  const metaParts = [];
+  if (it.year) metaParts.push(it.year);
+  if (it.country) metaParts.push(it.country);
+  if (it.type === 'tv' && it.seasons) {
+    metaParts.push(it.seasons > 1 ? `Staffel ${it.seasons}` : `${it.episodes || '?'} Folgen`);
+  } else if (it.runtime) {
+    metaParts.push(`${it.runtime} Min.`);
+  }
+  if (it.rating) metaParts.push(`★ ${it.rating}`);
+  const providers = (it.providers || []).join(' · ');
+
+  const upBadge = it.is_upcoming && it.release_date
+    ? `<span class="mag-card-up">ab ${formatShortDate(it.release_date)}</span>` : '';
+  const fanOf = it.fan_of ? `
+      <div class="mag-card-box mag-card-fanof">
+        <span class="mag-box-label">Für Fans von</span>
+        <span class="mag-box-text">${esc(it.fan_of)}</span>
+      </div>` : '';
+
+  return `
+  <article class="mag-card">
+    <div class="mag-card-hero">
+      ${backdrop ? `<img src="${esc(backdrop)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
+      <span class="mag-card-genre" style="background:${genreBadgeColor(genre)}">${esc(genre.toUpperCase())}</span>
+      ${upBadge}
+    </div>
+    <div class="mag-card-body">
+      <h3 class="mag-card-title">${esc(it.title)}</h3>
+      <p class="mag-card-meta">${esc(metaParts.join(' · '))}${providers ? ` · ${esc(providers)}` : ''}</p>
+      ${it.overview ? `<p class="mag-card-overview">${esc(it.overview)}</p>` : ''}
+      <div class="mag-card-box mag-card-reason">
+        <span class="mag-box-label">Warum für dich</span>
+        <span class="mag-box-text">${esc(it.reason || '')}</span>
+      </div>
+      ${fanOf}
+      <button class="mag-add-btn${onList ? ' added' : ''}" data-idx="${i}" ${onList ? 'disabled' : ''}>
+        ${onList ? '✓ Auf deiner Liste' : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist')}
+      </button>
+    </div>
+  </article>`;
+}
+
+function updateMagazineProgress(idx, total) {
+  const el = document.getElementById('magazineProgress');
+  if (el) el.textContent = `${idx + 1} / ${total}`;
+}
+
+function openMagazineReader() {
+  const $reader = document.getElementById('magazineReader');
+  const $track = document.getElementById('magazineTrack');
+  const all = magazineItems();
+  if (!$reader || !$track || all.length === 0) return;
+
+  const issueEl = document.getElementById('magazineIssue');
+  if (issueEl) issueEl.textContent = `Streaming-Woche Nr. ${magazine.issue ? magazine.issue.week : ''}`;
+
+  $track.innerHTML = all.map((it, i) => magazineCardHtml(it, i)).join('');
+  $reader.classList.remove('hidden');
+  document.body.classList.add('mag-open');
+  $track.scrollTop = 0;
+  updateMagazineProgress(0, all.length);
+
+  $track.onscroll = () => {
+    const idx = Math.round($track.scrollTop / $track.clientHeight);
+    updateMagazineProgress(Math.min(Math.max(idx, 0), all.length - 1), all.length);
+  };
+
+  $track.querySelectorAll('.mag-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (!Number.isNaN(idx) && all[idx]) addFromMagazine(all[idx], btn);
+    });
+  });
+}
+
+function closeMagazineReader() {
+  const $reader = document.getElementById('magazineReader');
+  if (!$reader || $reader.classList.contains('hidden')) return;
+  $reader.classList.add('hidden');
+  document.body.classList.remove('mag-open');
+}
+
+function markMagazineAdded(btn) {
+  btn.classList.add('added');
+  btn.disabled = true;
+  btn.textContent = '✓ Auf deiner Liste';
+}
+
+async function addFromMagazine(it, btn) {
+  const existing = items.find(x => x.tmdbId === it.tmdb_id && x.type === it.type);
+  if (existing) { markMagazineAdded(btn); return; }
+
+  if (Array.isArray(it.providers_app) && it.providers_app.length > 0) {
+    // All data already in the magazine JSON — add without client roundtrips
+    const item = {
+      id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+      tmdbId: it.tmdb_id,
+      title: it.title,
+      year: it.year || '',
+      type: it.type,
+      poster: it.poster_path,
+      backdrop: it.backdrop_path,
+      overview: it.overview || '',
+      rating: it.rating || null,
+      serviceId: it.providers_app[0],
+      watched: false,
+      addedAt: Date.now(),
+      updatedAt: Date.now(),
+      providers: { flat: it.providers_app, rent: [], buy: [] },
+    };
+    items.unshift(item);
+    saveItems();
+    renderFilterBar();
+    renderWatchlist();
+    markMagazineAdded(btn);
+    showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
+  } else {
+    // No provider known yet (e.g. far-out upcoming) — full lookup path
+    btn.disabled = true;
+    btn.textContent = 'Wird hinzugefügt…';
+    await handleAutoAdd(it.tmdb_id, it.type);
+    const ok = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
+    if (ok) {
+      markMagazineAdded(btn);
+    } else {
+      btn.disabled = false;
+      btn.textContent = it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist';
+    }
+  }
+}
+
+const $magClose = document.getElementById('magazineClose');
+if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeMagazineReader();
+});
 
 // ---- Boot ----
 init();
