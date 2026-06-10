@@ -195,8 +195,10 @@ export default {
     //   "0 3 * * SUN"  → weekly taste-profile rebuild
     if (event.cron === '0 3 * * SUN') {
       ctx.waitUntil(rebuildTasteProfileCache(env));
-    } else {
+    } else if (event.cron === '0 16 * * FRI') {
       ctx.waitUntil(runMagazinePipeline(env, { dryRun: false, source: 'cron' }));
+    } else {
+      console.warn('Unknown cron trigger:', event.cron);
     }
   },
 };
@@ -455,6 +457,7 @@ async function loadOrBuildTasteProfile(watchlist, env, note) {
 
 async function rebuildTasteProfileCache(env) {
   console.log('Weekly taste-profile rebuild starting');
+  tmdbCalls = 0;
   requireSecret(env, 'OWNER_SYNC_KEY');
   requireSecret(env, 'TMDB_API_KEY');
   const watchlist = await loadOwnerWatchlist(env);

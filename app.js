@@ -1297,6 +1297,7 @@ function openMagazineReader() {
   const $track = document.getElementById('magazineTrack');
   const all = magazineItems();
   if (!$reader || !$track || all.length === 0) return;
+  if (!$reader.classList.contains('hidden')) return;
 
   const issueEl = document.getElementById('magazineIssue');
   if (issueEl) issueEl.textContent = `Streaming-Woche Nr. ${magazine.issue ? magazine.issue.week : ''}`;
