@@ -1,18 +1,28 @@
-// Watchlist Sync API + Recommendation Engine — Cloudflare Worker + KV
+// Watchlist Sync API + Wochen-Magazin Engine — Cloudflare Worker + KV
 // Multi-tenant: each sync key = separate watchlist namespace
 //
 // Endpoints:
-//   GET  /sync       — return owner's watchlist (auth: X-API-Key header)
-//   PUT  /sync       — save owner's watchlist (auth: X-API-Key header)
-//   POST /recommend  — manual trigger of recommendation pipeline
-//                      auth: X-Admin-Key header == env.ADMIN_KEY
-//                      ?dryRun=1 → skip Telegram, return preview JSON
+//   GET  /sync           — return owner's watchlist (auth: X-API-Key header)
+//   PUT  /sync           — save owner's watchlist (auth: X-API-Key header)
+//   GET  /magazine       — return current weekly magazine JSON (auth: X-API-Key)
+//   POST /magazine-build — manual trigger of magazine pipeline
+//                          auth: X-Admin-Key header == env.ADMIN_KEY
+//                          ?dryRun=1 → skip Telegram + KV writes, return preview JSON
+//   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
 //
-// Scheduled handler runs the same recommendation pipeline on cron.
+// Scheduled handler (see wrangler.toml [triggers].crons):
+//   "0 16 * * FRI" → weekly magazine build (18:00 MESZ, Wochenend-Start)
+//   "0 3 * * SUN"  → weekly taste-profile rebuild
 //
-// Ported from watchlist/recommend.py (Cowork repo). Plan B (2026-05-14):
-//   Producer-Konsolidierung Mac/GHA/CC → Cloudflare Worker als single source.
-//   Match-Schwelle MEDIUM = scoreWithTaste >= 0.35 (User-Decision 2026-05-14).
+// WL-5 (2026-06-11): Wochen-Magazin ersetzt die taegliche Telegram-Empfehlung.
+//   Kein popular-per-provider-Katalogbestand mehr — nur Neuerscheinungen
+//   (letzte 30d) + Demnaechst (naechste 14d), taste-ranked, als Magazin-JSON
+//   in KV. Die App rendert das Magazin und IST die Benachrichtigung (Teaser
+//   beim Oeffnen) — Telegram nur noch im Fehlerfall (silent-stale-Schutz,
+//   Customer-Entscheid 2026-06-11). Subrequest-Budget hart gedeckelt
+//   (Free-Tier 50/Invocation).
+// Plan B (2026-05-14): Producer-Konsolidierung Mac/GHA/CC → Worker als
+//   single source. Match-Schwelle MEDIUM = scoreWithTaste >= 0.35.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants
@@ -27,7 +37,6 @@ const CORS_HEADERS = {
 const MIN_KEY_LENGTH = 32;
 
 // Scholly's streaming providers (TMDB provider IDs → display name).
-// Keep parity with recommend.py PROVIDER_IDS.
 const PROVIDER_IDS = {
   8: 'Netflix',
   9: 'Amazon Prime Video',
@@ -45,23 +54,27 @@ const PROVIDER_IDS = {
   1899: 'HBO Max',
 };
 
-// Distinct provider IDs only — used for popular-per-provider fetching to avoid
-// duplicate calls when two IDs map to the same display name.
-const DISTINCT_PROVIDER_IDS = (() => {
-  const seen = new Set();
-  const out = [];
-  for (const [pid, name] of Object.entries(PROVIDER_IDS)) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    out.push(Number(pid));
-  }
-  return out;
-})();
-
 const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
   .map(Number)
   .sort((a, b) => a - b)
   .join('|');
+
+// TMDB provider ID → App-Service-ID (mirror of app.js SERVICES.tmdbIds).
+// providers_app feeds the in-app 1-tap-add (serviceId without client roundtrip).
+const APP_SERVICE_MAP = {
+  8: 'netflix',
+  9: 'prime', 119: 'prime',
+  337: 'disney',
+  350: 'apple',
+  30: 'sky', 1773: 'sky', 29: 'sky',
+  384: 'hbo', 1899: 'hbo',
+  531: 'paramount',
+  178: 'magenta',
+  304: 'joyn', 421: 'joyn',
+  219: 'ard',
+  537: 'zdf', 536: 'zdf',
+  298: 'rtl', 1771: 'rtl',
+};
 
 const GENRE_MAP = {
   28: 'Action', 12: 'Abenteuer', 16: 'Animation', 35: 'Komoedie',
@@ -74,35 +87,36 @@ const GENRE_MAP = {
   10767: 'Talk', 10768: 'Krieg & Politik',
 };
 
-const WATCHLIST_APP_URL = 'https://escholly-ship-it.github.io/watchlist/';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
-const TMDB_WEB_BASE = 'https://www.themoviedb.org';
 
-const MAX_PRIMARY = 8;       // "Heute streamen" — Top-N popular-per-provider
-const MAX_SECONDARY = 5;     // "Neuerscheinungen" — Top-N new releases
-const DEDUP_DAYS = 14;
 const MIN_RATING = 5.5;
 const MIN_VOTES = 20;
-const LOOKBACK_DAYS = 28;
-const LOOKAHEAD_DAYS = 90;
 const MEDIUM_THRESHOLD = 0.35;  // User-Decision 2026-05-14
-const TASTE_SAMPLE_SIZE = 15;   // Weekly cron only; daily cron reads KV cache.
+const TASTE_SAMPLE_SIZE = 15;
+const TASTE_CACHE_TTL_DAYS = 8;
 const TELEGRAM_CHUNK_LIMIT = 4000;
 
-// Subrequest budget on Workers Free is 50/invocation. Tight knobs below stay
-// well under that for the daily run (taste profile is cached weekly).
-const POPULAR_TOP_PROVIDERS = 5;             // Only top-5 providers for "Heute streamen"
-const POPULAR_MEDIA_TYPES = ['movie', 'tv']; // Both for Primary section
-const NEW_RELEASE_PAGES = 1;                 // 1 page × 2 media types = 2 calls
-const ENRICH_CHECK_FACTOR = 2;               // limit × N candidates to provider-check
-const TASTE_CACHE_TTL_DAYS = 8;              // Refreshed weekly; soft refresh window 8d
-
 // Original-language preference (Scholly watches OV only).
-// Items in these languages keep full score; others are penalised so that
-// average-matches drop below MEDIUM but a really strong taste-match in a
-// non-preferred language can still surface.
 const PREFERRED_LANGUAGES = new Set(['en', 'de', 'sv']);
 const NON_PREFERRED_LANG_FACTOR = 0.5;
+
+// ── Magazine knobs (WL-5) ────────────────────────────────────────────────
+// Subrequest budget on Workers Free is 50/invocation (fetch + KV combined).
+// Worst case: 4-6 discover + ≤16 details + 1 Telegram + ~8 KV ≈ 31 — the
+// TMDB_CALL_CEILING is a runtime guard well below the wall.
+const MAGAZINE_NEW_COUNT = 8;        // Rubrik "Neu fuer dich"
+const MAGAZINE_UPCOMING_COUNT = 4;   // Rubrik "Demnaechst"
+const MAGAZINE_ENRICH_CAP = 16;      // hard cap on per-title detail calls
+const MAGAZINE_LOOKBACK_DAYS = 30;   // "neu" window: released within last 30d
+const MAGAZINE_LOOKAHEAD_DAYS = 14;  // "demnaechst" window: next 14d
+const MAGAZINE_SEEN_DAYS = 35;       // dedup window vs previous issues
+const MAGAZINE_MIN_NEW_CANDIDATES = 5; // below this → fetch discover page 2
+const TMDB_CALL_CEILING = 40;        // runtime guard (gate test asserts ≤45 total)
+
+// Module-level TMDB call counter. Reset per pipeline run; cron fires once a
+// week and manual triggers are rare, so cross-invocation interleaving is not
+// a practical concern on this single-tenant worker.
+let tmdbCalls = 0;
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP entrypoints
@@ -116,8 +130,8 @@ export default {
 
     const url = new URL(request.url);
 
-    if (url.pathname === '/recommend' && request.method === 'POST') {
-      return handleRecommendTrigger(request, env, ctx, url);
+    if (url.pathname === '/magazine-build' && request.method === 'POST') {
+      return handleMagazineBuild(request, env, ctx, url);
     }
 
     if (url.pathname === '/rebuild-taste' && request.method === 'POST') {
@@ -134,10 +148,11 @@ export default {
         decades: cached && cached.profile && Object.keys(cached.profile.decades).length,
         cast: cached && cached.profile && Object.keys(cached.profile.cast).length,
         avg_rating: cached && cached.profile && cached.profile.avg_rating,
+        sample_titles: cached && Array.isArray(cached.sample) ? cached.sample.length : 0,
       });
     }
 
-    // /sync routes — owner-scoped via X-API-Key
+    // Owner-scoped routes via X-API-Key
     const apiKey = request.headers.get('X-API-Key');
     if (!apiKey || apiKey.length < MIN_KEY_LENGTH) {
       return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -167,28 +182,35 @@ export default {
       return jsonResponse({ ok: true, count: body.items.length, timestamp: Date.now() });
     }
 
+    if (url.pathname === '/magazine' && request.method === 'GET') {
+      const magazine = await env.WATCHLIST_KV.get(`magazine:${apiKey}`, 'json');
+      return jsonResponse({ magazine: magazine || null, timestamp: Date.now() });
+    }
+
     return jsonResponse({ error: 'Not found' }, 404);
   },
 
   async scheduled(event, env, ctx) {
     // Two cron schedules — see wrangler.toml [triggers].crons:
-    //   "35 16 * * *"  → daily recommendation run
-    //   "0 3 * * 0"    → weekly taste-profile rebuild (Sunday 03:00 UTC)
+    //   "0 16 * * FRI" → weekly magazine build
+    //   "0 3 * * SUN"  → weekly taste-profile rebuild
     if (event.cron === '0 3 * * SUN') {
       ctx.waitUntil(rebuildTasteProfileCache(env));
+    } else if (event.cron === '0 16 * * FRI') {
+      ctx.waitUntil(runMagazinePipeline(env, { dryRun: false, source: 'cron' }));
     } else {
-      ctx.waitUntil(runRecommendationPipeline(env, { dryRun: false, source: 'cron' }));
+      console.warn('Unknown cron trigger:', event.cron);
     }
   },
 };
 
-async function handleRecommendTrigger(request, env, ctx, url) {
+async function handleMagazineBuild(request, env, ctx, url) {
   const adminKey = request.headers.get('X-Admin-Key');
   if (!env.ADMIN_KEY || adminKey !== env.ADMIN_KEY) {
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
   const dryRun = url.searchParams.get('dryRun') === '1';
-  const result = await runRecommendationPipeline(env, { dryRun, source: 'manual' });
+  const result = await runMagazinePipeline(env, { dryRun, source: 'manual' });
   return jsonResponse(result);
 }
 
@@ -200,29 +222,21 @@ function jsonResponse(data, status = 200) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Pipeline orchestrator
+// Magazine pipeline (WL-5)
 // ─────────────────────────────────────────────────────────────────────────
 
-async function runRecommendationPipeline(env, { dryRun, source }) {
+async function runMagazinePipeline(env, { dryRun, source }) {
   const startedAt = Date.now();
+  tmdbCalls = 0;
   const log = [];
   const note = (msg) => { log.push(msg); console.log(msg); };
 
   try {
     requireSecret(env, 'OWNER_SYNC_KEY');
     requireSecret(env, 'TMDB_API_KEY');
-    if (!dryRun) {
-      requireSecret(env, 'TELEGRAM_BOT_TOKEN');
-      requireSecret(env, 'TELEGRAM_CHAT_ID');
-    }
 
     const watchlist = await loadOwnerWatchlist(env);
     note(`Watchlist: ${watchlist.length} items`);
-    if (watchlist.length === 0) {
-      const msg = 'Watchlist leer — nichts zu empfehlen.';
-      if (!dryRun) await postTelegram(`🎬 ${msg}`, env);
-      return { ok: true, source, message: msg, log };
-    }
 
     const watchlistIds = new Set(
       watchlist
@@ -230,91 +244,115 @@ async function runRecommendationPipeline(env, { dryRun, source }) {
         .map((it) => `${it.type || 'movie'}_${it.tmdbId}`)
     );
 
-    const taste = await loadOrBuildTasteProfile(watchlist, env, note);
-    const topGenres = Object.entries(taste.genres)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([gid, w]) => `${GENRE_MAP[gid] || gid} (${w.toFixed(2)})`);
-    note(`Top genres: ${topGenres.join(', ')}`);
+    const { profile: taste, sample: tasteSample } =
+      await loadOrBuildTasteProfile(watchlist, env, note);
+    const seen = await loadMagazineSeen(env);
+    note(`Magazine seen state: ${Object.keys(seen).length} entries (last ${MAGAZINE_SEEN_DAYS}d)`);
 
-    const recommended = await loadDedupState(env);
-    note(`Dedup state: ${Object.keys(recommended).length} entries (last ${DEDUP_DAYS}d)`);
+    const today = new Date();
+    const todayStr = isoDate(today);
 
-    // ── Primary: "Heute streamen" — popular per provider, balanced 50/50 ──
-    const primaryRaw = await fetchPopularPerProvider(env);
-    note(`Primary raw candidates: ${primaryRaw.length}`);
-    const primaryScored = scoreAndFilter(primaryRaw, taste, watchlistIds, recommended);
-    const moviePool = primaryScored.filter((it) => it.type === 'movie');
-    const tvPool = primaryScored.filter((it) => it.type === 'tv');
-    note(`Primary after MEDIUM filter (>= ${MEDIUM_THRESHOLD}): ${primaryScored.length} (movie=${moviePool.length}, tv=${tvPool.length})`);
-    const movieHalf = Math.floor(MAX_PRIMARY / 2);
-    const tvHalf = MAX_PRIMARY - movieHalf;
-    const primaryMovies = await enrichWithProviders(moviePool, env, movieHalf);
-    const primaryTv = await enrichWithProviders(tvPool, env, tvHalf);
-    // Interleave movie/tv so the section reads as a mix, not two blocks
-    const primaryFinal = interleave(primaryMovies, primaryTv);
-    note(`Primary final: ${primaryFinal.length} (movie=${primaryMovies.length}, tv=${primaryTv.length})`);
-
-    // ── Secondary: "Neuerscheinungen" — discover by release_date ──
-    const secondaryRaw = await fetchNewReleases(env);
-    note(`Secondary raw candidates: ${secondaryRaw.length}`);
-    const primaryKeys = new Set(primaryFinal.map((r) => r.key));
-    const secondaryScored = scoreAndFilter(
-      secondaryRaw.filter((r) => !primaryKeys.has(itemKey(r))),
-      taste,
-      watchlistIds,
-      recommended,
+    // ── Rubrik "Neu fuer dich": released within last MAGAZINE_LOOKBACK_DAYS ──
+    let newRaw = await fetchMagazineWindow(
+      isoDate(addDays(today, -MAGAZINE_LOOKBACK_DAYS)), todayStr, 1, 5, env,
     );
-    note(`Secondary after MEDIUM filter: ${secondaryScored.length}`);
-    const secondaryFinal = await enrichWithProviders(secondaryScored, env, MAX_SECONDARY);
-    note(`Secondary final: ${secondaryFinal.length}`);
+    note(`Neu raw candidates: ${newRaw.length} (tmdbCalls=${tmdbCalls})`);
+    let newScored = scoreAndFilter(newRaw, taste, watchlistIds, seen);
 
-    // ── Format + post ──
-    const message = formatTelegramMessage(primaryFinal, secondaryFinal, env.OWNER_SYNC_KEY);
-    note(`Message length: ${message.length} chars`);
+    // Fallback: thin yield → widen with discover page 2 (P2-NEU-1 fix)
+    if (newScored.length < MAGAZINE_MIN_NEW_CANDIDATES) {
+      note(`Neu below threshold (${newScored.length} < ${MAGAZINE_MIN_NEW_CANDIDATES}) — fetching page 2`);
+      const page2 = await fetchMagazineWindow(
+        isoDate(addDays(today, -MAGAZINE_LOOKBACK_DAYS)), todayStr, 2, 5, env,
+      );
+      const known = new Set(newRaw.map((r) => itemKey(r)));
+      newRaw = newRaw.concat(page2.filter((r) => !known.has(itemKey(r))));
+      newScored = scoreAndFilter(newRaw, taste, watchlistIds, seen);
+      note(`Neu after fallback: ${newScored.length}`);
+    }
+
+    // ── Rubrik "Demnaechst": next MAGAZINE_LOOKAHEAD_DAYS ──
+    const upRaw = await fetchMagazineWindow(
+      isoDate(addDays(today, 1)), isoDate(addDays(today, MAGAZINE_LOOKAHEAD_DAYS)), 1, 0, env,
+    );
+    note(`Demnaechst raw candidates: ${upRaw.length} (tmdbCalls=${tmdbCalls})`);
+    const newKeys = new Set(newScored.map((r) => r.key));
+    const upScored = scoreAndFilter(
+      upRaw.filter((r) => !newKeys.has(itemKey(r))),
+      taste, watchlistIds, seen, { relaxVotes: true },
+    );
+    note(`Neu scored: ${newScored.length} · Demnaechst scored: ${upScored.length}`);
+
+    // ── Enrichment: ONE combined details call per candidate ──
+    const neuItems = await enrichMagazineItems(
+      newScored, MAGAZINE_NEW_COUNT, { requireProviders: true }, taste, tasteSample, env, note,
+    );
+    const upItems = await enrichMagazineItems(
+      upScored, MAGAZINE_UPCOMING_COUNT, { requireProviders: false }, taste, tasteSample, env, note,
+    );
+    upItems.sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
+    note(`Enriched: neu=${neuItems.length} demnaechst=${upItems.length} (tmdbCalls=${tmdbCalls})`);
+
+    const subrequests = {
+      tmdb: tmdbCalls,
+      kv_est: 8,
+      total_est: tmdbCalls + 8,
+    };
+
+    if (neuItems.length === 0 && upItems.length === 0) {
+      const msg = 'Magazin diese Woche uebersprungen — keine passenden Neuerscheinungen gefunden.';
+      note(msg);
+      if (!dryRun) await postTelegram(`⚠️ ${msg}`, env);
+      return { ok: false, source, skipped: true, message: msg, subrequests, log, elapsedMs: Date.now() - startedAt };
+    }
+
+    const issueWeek = isoWeek(today);
+    const magazine = {
+      version: 1,
+      issue: {
+        week: issueWeek,
+        year: today.getFullYear(),
+        date: todayStr,
+        ts: Math.floor(Date.now() / 1000),
+      },
+      counts: { neu: neuItems.length, demnaechst: upItems.length },
+      sections: [
+        { id: 'neu', title: 'Neu fuer dich', items: neuItems },
+        { id: 'demnaechst', title: 'Demnaechst', items: upItems },
+      ],
+    };
 
     if (dryRun) {
-      return {
-        ok: true,
-        source,
-        dryRun: true,
-        primary: primaryFinal,
-        secondary: secondaryFinal,
-        message,
-        log,
-        elapsedMs: Date.now() - startedAt,
-      };
+      return { ok: true, source, dryRun: true, magazine, subrequests, log, elapsedMs: Date.now() - startedAt };
     }
 
-    if (primaryFinal.length === 0 && secondaryFinal.length === 0) {
-      const emptyMsg = '🎬 <b>Streaming-Empfehlungen</b>\nHeute keine neuen Empfehlungen — alle Kandidaten waren bereits bekannt oder unter MEDIUM-Schwelle.';
-      await postTelegram(emptyMsg, env);
-    } else {
-      await postTelegram(message, env);
-    }
+    await env.WATCHLIST_KV.put(`magazine:${env.OWNER_SYNC_KEY}`, JSON.stringify(magazine));
 
-    // Update dedup state
+    // Update seen state so next issue does not repeat titles
     const now = Math.floor(Date.now() / 1000);
-    const today = new Date().toISOString().slice(0, 10);
-    for (const rec of [...primaryFinal, ...secondaryFinal]) {
-      recommended[rec.key] = { title: rec.title, ts: now, date: today };
+    for (const it of [...neuItems, ...upItems]) {
+      seen[it.key] = { title: it.title, ts: now, date: todayStr };
     }
-    await saveDedupState(env, recommended);
-    note(`Dedup updated: ${Object.keys(recommended).length} entries`);
+    await saveMagazineSeen(env, seen);
+
+    // Customer-Entscheid 2026-06-11: kein Erfolgs-Ping — die App selbst zeigt
+    // die neue Ausgabe beim Oeffnen (Teaser-Karte). Telegram nur im Fehlerfall
+    // (silent-stale-Schutz). Web-Push in der App: Backlog WL-10.
 
     return {
       ok: true,
       source,
-      primaryCount: primaryFinal.length,
-      secondaryCount: secondaryFinal.length,
+      issue: magazine.issue,
+      counts: magazine.counts,
+      subrequests,
       log,
       elapsedMs: Date.now() - startedAt,
     };
   } catch (err) {
-    console.error('Pipeline error:', err);
+    console.error('Magazine pipeline error:', err);
     if (!dryRun) {
       try {
-        await postTelegram(`⚠️ Watchlist-Empfehlungen Fehler: ${err.message || err}`, env);
+        await postTelegram(`⚠️ Wochen-Magazin Fehler: ${err.message || err}`, env);
       } catch (postErr) {
         console.error('Failed to post error to Telegram:', postErr);
       }
@@ -328,7 +366,7 @@ function requireSecret(env, name) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// KV: owner watchlist + dedup state
+// KV: owner watchlist + magazine seen state
 // ─────────────────────────────────────────────────────────────────────────
 
 async function loadOwnerWatchlist(env) {
@@ -336,11 +374,10 @@ async function loadOwnerWatchlist(env) {
   return Array.isArray(data) ? data : [];
 }
 
-async function loadDedupState(env) {
-  const key = `recommended:${env.OWNER_SYNC_KEY}`;
-  const raw = await env.WATCHLIST_KV.get(key, 'json');
+async function loadMagazineSeen(env) {
+  const raw = await env.WATCHLIST_KV.get(`magazine_seen:${env.OWNER_SYNC_KEY}`, 'json');
   if (!raw || typeof raw !== 'object') return {};
-  const cutoff = Math.floor(Date.now() / 1000) - DEDUP_DAYS * 86400;
+  const cutoff = Math.floor(Date.now() / 1000) - MAGAZINE_SEEN_DAYS * 86400;
   const fresh = {};
   for (const [k, v] of Object.entries(raw)) {
     if (v && typeof v.ts === 'number' && v.ts > cutoff) fresh[k] = v;
@@ -348,9 +385,8 @@ async function loadDedupState(env) {
   return fresh;
 }
 
-async function saveDedupState(env, state) {
-  const key = `recommended:${env.OWNER_SYNC_KEY}`;
-  await env.WATCHLIST_KV.put(key, JSON.stringify(state));
+async function saveMagazineSeen(env, state) {
+  await env.WATCHLIST_KV.put(`magazine_seen:${env.OWNER_SYNC_KEY}`, JSON.stringify(state));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -366,9 +402,9 @@ async function tmdbGet(path, params, env) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
   }
-  // Cache TTL deliberately short: TMDB results we care about (discover, providers)
-  // change over the day, and a cached empty response would poison the pipeline.
-  // 60 s is enough to coalesce duplicate calls within a single scheduled invocation.
+  tmdbCalls++;
+  // Cache TTL deliberately short — 60 s coalesces duplicate calls within one
+  // invocation without letting a cached empty response poison the pipeline.
   try {
     const resp = await fetch(url.toString(), { cf: { cacheTtl: 60, cacheEverything: true } });
     if (!resp.ok) {
@@ -384,7 +420,7 @@ async function tmdbGet(path, params, env) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Taste profile (Sprint 262 multi-factor: genres + decades + cast + avg_rating)
+// Taste profile (multi-factor: genres + decades + cast + avg_rating)
 // ─────────────────────────────────────────────────────────────────────────
 
 function tasteCacheKey(env) {
@@ -397,24 +433,23 @@ async function loadOrBuildTasteProfile(watchlist, env, note) {
     const ageDays = (Date.now() / 1000 - cached.ts) / 86400;
     if (ageDays < TASTE_CACHE_TTL_DAYS) {
       note(`Taste profile: KV cache hit (${ageDays.toFixed(1)}d old)`);
-      return cached.profile;
+      return { profile: cached.profile, sample: cached.sample || [] };
     }
     note(`Taste profile: KV cache stale (${ageDays.toFixed(1)}d old) — rebuilding inline`);
   } else {
     note('Taste profile: no KV cache — building inline');
   }
-  // Inline build (only on cold start / cache-stale day; weekly cron normally
-  // keeps cache fresh and we never hit this branch from the daily run).
-  const profile = await buildTasteProfile(watchlist, env);
+  const { profile, sample } = await buildTasteProfile(watchlist, env);
   await env.WATCHLIST_KV.put(
     tasteCacheKey(env),
-    JSON.stringify({ profile, ts: Math.floor(Date.now() / 1000) }),
+    JSON.stringify({ profile, sample, ts: Math.floor(Date.now() / 1000) }),
   );
-  return profile;
+  return { profile, sample };
 }
 
 async function rebuildTasteProfileCache(env) {
   console.log('Weekly taste-profile rebuild starting');
+  tmdbCalls = 0;
   requireSecret(env, 'OWNER_SYNC_KEY');
   requireSecret(env, 'TMDB_API_KEY');
   const watchlist = await loadOwnerWatchlist(env);
@@ -422,23 +457,22 @@ async function rebuildTasteProfileCache(env) {
     console.log('Watchlist empty — skipping taste-profile rebuild');
     return;
   }
-  const profile = await buildTasteProfile(watchlist, env);
+  const { profile, sample } = await buildTasteProfile(watchlist, env);
   await env.WATCHLIST_KV.put(
     tasteCacheKey(env),
-    JSON.stringify({ profile, ts: Math.floor(Date.now() / 1000) }),
+    JSON.stringify({ profile, sample, ts: Math.floor(Date.now() / 1000) }),
   );
-  console.log(`Taste profile rebuilt and cached: genres=${Object.keys(profile.genres).length} decades=${Object.keys(profile.decades).length} cast=${Object.keys(profile.cast).length}`);
+  console.log(`Taste profile rebuilt and cached: genres=${Object.keys(profile.genres).length} decades=${Object.keys(profile.decades).length} cast=${Object.keys(profile.cast).length} sample=${sample.length}`);
 }
 
 async function buildTasteProfile(watchlist, env) {
-  const sample = sampleRandom(
+  const samplePick = sampleRandom(
     watchlist.filter((it) => it.tmdbId),
     TASTE_SAMPLE_SIZE,
   );
 
-  // Parallel fetch with append_to_response=credits to halve API calls
   const details = await Promise.all(
-    sample.map((item) =>
+    samplePick.map((item) =>
       tmdbGet(
         `${item.type || 'movie'}/${item.tmdbId}`,
         { append_to_response: 'credits' },
@@ -451,11 +485,15 @@ async function buildTasteProfile(watchlist, env) {
   const decadeCounts = new Map();
   const castCounts = new Map();
   const ratings = [];
+  // Per-title sample meta — powers the magazine "Fuer Fans von" line without
+  // extra subrequests (data is already on hand during rebuild).
+  const sample = [];
 
   for (const { item, data } of details) {
     if (!data) continue;
-    for (const g of data.genres || []) {
-      if (g.id) genreCounts.set(g.id, (genreCounts.get(g.id) || 0) + 1);
+    const genreIds = (data.genres || []).map((g) => g.id).filter(Boolean);
+    for (const gid of genreIds) {
+      genreCounts.set(gid, (genreCounts.get(gid) || 0) + 1);
     }
     const dateField = (item.type === 'tv') ? 'first_air_date' : 'release_date';
     const dateStr = data[dateField] || '';
@@ -473,6 +511,11 @@ async function buildTasteProfile(watchlist, env) {
     for (const member of cast.slice(0, 5)) {
       if (member.id) castCounts.set(member.id, (castCounts.get(member.id) || 0) + 1);
     }
+    sample.push({
+      title: data.title || data.name || item.title || 'Unknown',
+      type: item.type || 'movie',
+      genre_ids: genreIds,
+    });
   }
 
   const avgRating = ratings.length > 0
@@ -480,10 +523,13 @@ async function buildTasteProfile(watchlist, env) {
     : 6.5;
 
   return {
-    genres: normalizeMap(genreCounts),
-    decades: normalizeMap(decadeCounts),
-    cast: normalizeMap(castCounts),
-    avg_rating: avgRating,
+    profile: {
+      genres: normalizeMap(genreCounts),
+      decades: normalizeMap(decadeCounts),
+      cast: normalizeMap(castCounts),
+      avg_rating: avgRating,
+    },
+    sample,
   };
 }
 
@@ -506,7 +552,7 @@ function sampleRandom(arr, n) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Scoring (Sprint 262 score_with_taste, range 0..1)
+// Scoring (score_with_taste, range 0..1)
 // ─────────────────────────────────────────────────────────────────────────
 
 function scoreWithTaste(item, taste) {
@@ -547,52 +593,13 @@ function itemKey(item) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Discovery — Primary "Heute streamen" + Secondary "Neuerscheinungen"
+// Discovery — release windows on Scholly's providers (DE)
 // ─────────────────────────────────────────────────────────────────────────
 
-async function fetchPopularPerProvider(env) {
-  // Subrequest-budget cap: only top N providers × restricted media types.
-  const providers = DISTINCT_PROVIDER_IDS.slice(0, POPULAR_TOP_PROVIDERS);
-  const tasks = [];
-  for (const pid of providers) {
-    for (const mediaType of POPULAR_MEDIA_TYPES) {
-      tasks.push(fetchPopularForProvider(pid, mediaType, env));
-    }
-  }
-  const results = await Promise.all(tasks);
-  const seen = new Map();
-  for (const list of results) {
-    for (const it of list) {
-      const k = itemKey(it);
-      if (!seen.has(k)) seen.set(k, it);
-    }
-  }
-  return Array.from(seen.values());
-}
-
-async function fetchPopularForProvider(providerId, mediaType, env) {
-  const data = await tmdbGet(`discover/${mediaType}`, {
-    watch_region: 'DE',
-    with_watch_providers: providerId,
-    with_watch_monetization_types: 'flatrate|free|ads',
-    sort_by: 'popularity.desc',
-    'vote_count.gte': 50,
-    page: 1,
-  }, env);
-  if (!data || !Array.isArray(data.results)) return [];
-  return data.results.map((r) => normalizeDiscoverItem(r, mediaType));
-}
-
-async function fetchNewReleases(env) {
-  const today = new Date();
-  const dateFrom = isoDate(addDays(today, -LOOKBACK_DAYS));
-  const dateTo = isoDate(addDays(today, LOOKAHEAD_DAYS));
-
+async function fetchMagazineWindow(dateFrom, dateTo, page, voteCountGte, env) {
   const tasks = [];
   for (const mediaType of ['movie', 'tv']) {
-    for (let page = 1; page <= NEW_RELEASE_PAGES; page++) {
-      tasks.push(fetchNewReleasesPage(mediaType, dateFrom, dateTo, page, env));
-    }
+    tasks.push(fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env));
   }
   const pages = await Promise.all(tasks);
   const seen = new Map();
@@ -605,7 +612,7 @@ async function fetchNewReleases(env) {
   return Array.from(seen.values());
 }
 
-async function fetchNewReleasesPage(mediaType, dateFrom, dateTo, page, env) {
+async function fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env) {
   const dateGteKey = mediaType === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte';
   const dateLteKey = mediaType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
   const data = await tmdbGet(`discover/${mediaType}`, {
@@ -615,7 +622,7 @@ async function fetchNewReleasesPage(mediaType, dateFrom, dateTo, page, env) {
     [dateGteKey]: dateFrom,
     [dateLteKey]: dateTo,
     sort_by: 'popularity.desc',
-    'vote_count.gte': 5,
+    'vote_count.gte': voteCountGte,
     page,
   }, env);
   if (!data || !Array.isArray(data.results)) return [];
@@ -635,15 +642,18 @@ function normalizeDiscoverItem(r, mediaType) {
     release_year: parseReleaseYear(r),
     popularity: r.popularity || 0,
     original_language: r.original_language || '',
-    cast_ids: [], // populated lazily — discover endpoint has no cast
+    poster_path: r.poster_path || null,
+    backdrop_path: r.backdrop_path || null,
+    cast_ids: [], // discover endpoint has no cast
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Scoring pipeline: score → MEDIUM filter → exclude watchlist+dedup → sort
+// Scoring pipeline: score → MEDIUM filter → exclude watchlist+seen → sort
 // ─────────────────────────────────────────────────────────────────────────
 
-function scoreAndFilter(items, taste, watchlistIds, recommended) {
+function scoreAndFilter(items, taste, watchlistIds, seenState, opts = {}) {
+  const relaxVotes = !!opts.relaxVotes;
   const today = new Date();
   const todayStr = isoDate(today);
   const scored = [];
@@ -651,15 +661,17 @@ function scoreAndFilter(items, taste, watchlistIds, recommended) {
   for (const it of items) {
     const key = itemKey(it);
     if (watchlistIds.has(key)) continue;
-    if (recommended[key]) continue;
+    if (seenState[key]) continue;
 
-    if (it.vote_count < 5) continue;
+    // Upcoming titles legitimately have few votes — relax for "Demnaechst",
+    // but require a minimum popularity so true long-tail noise stays out.
+    if (!relaxVotes && it.vote_count < 5) continue;
+    if (relaxVotes && it.vote_count < 5 && (it.popularity || 0) < 15) continue;
     if (it.vote_average < MIN_RATING && it.vote_count >= MIN_VOTES) continue;
 
     const taste_score = scoreWithTaste(it, taste);
     if (taste_score < MEDIUM_THRESHOLD) continue;
 
-    // Composite ranking score (mirrors recommend.py gather_candidates)
     const popularity = it.popularity || 0;
     let recencyBoost = 1.0;
     if (it.release_date) {
@@ -685,128 +697,147 @@ function scoreAndFilter(items, taste, watchlistIds, recommended) {
   return scored;
 }
 
-async function enrichWithProviders(scored, env, limit) {
-  const checkLimit = Math.min(scored.length, limit * ENRICH_CHECK_FACTOR);
+// ─────────────────────────────────────────────────────────────────────────
+// Magazine enrichment — ONE combined TMDB call per candidate
+// (append_to_response=credits,watch/providers), hard-capped.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function enrichMagazineItems(scored, limit, { requireProviders }, taste, tasteSample, env, note) {
   const out = [];
-  let probedNoProviders = 0;
-  for (let i = 0; i < checkLimit && out.length < limit; i++) {
-    const c = scored[i];
-    const providers = await getStreamingProviders(c.type, c.tmdb_id, env);
-    if (providers.length === 0) {
-      probedNoProviders++;
-      if (probedNoProviders <= 3) {
-        console.log(`enrich: no providers for ${c.type}/${c.tmdb_id} (${c.title})`);
-      }
-      continue;
+  let detailCalls = 0;
+  for (const c of scored) {
+    if (out.length >= limit) break;
+    if (detailCalls >= MAGAZINE_ENRICH_CAP) {
+      note(`Enrich cap reached (${MAGAZINE_ENRICH_CAP}) — stopping`);
+      break;
     }
-    const year = c.release_date ? c.release_date.slice(0, 4) : '';
-    const genres = c.genre_ids.slice(0, 3).map((g) => GENRE_MAP[g]).filter(Boolean).join(', ');
+    if (tmdbCalls >= TMDB_CALL_CEILING) {
+      note(`TMDB call ceiling reached (${TMDB_CALL_CEILING}) — stopping enrichment`);
+      break;
+    }
+
+    detailCalls++;
+    const data = await tmdbGet(
+      `${c.type}/${c.tmdb_id}`,
+      { append_to_response: 'credits,watch/providers' },
+      env,
+    );
+    if (!data) continue;
+
+    const de = data['watch/providers'] && data['watch/providers'].results
+      ? data['watch/providers'].results.DE
+      : null;
+    const providerNames = new Set();
+    const providerAppIds = new Set();
+    if (de) {
+      for (const cat of ['flatrate', 'free', 'ads']) {
+        for (const p of de[cat] || []) {
+          if (PROVIDER_IDS[p.provider_id]) providerNames.add(PROVIDER_IDS[p.provider_id]);
+          if (APP_SERVICE_MAP[p.provider_id]) providerAppIds.add(APP_SERVICE_MAP[p.provider_id]);
+        }
+      }
+    }
+    if (requireProviders && providerNames.size === 0) continue;
+
+    const castList = ((data.credits && data.credits.cast) || []).slice(0, 5);
+    const castIds = castList.map((m) => m.id).filter(Boolean);
+    const castNames = castList.slice(0, 3).map((m) => m.name).filter(Boolean);
+
+    const genreNames = (data.genres || [])
+      .map((g) => g.name || GENRE_MAP[g.id])
+      .filter(Boolean)
+      .slice(0, 3);
+
+    const country = c.type === 'tv'
+      ? ((data.origin_country && data.origin_country[0]) || null)
+      : ((data.production_countries && data.production_countries[0] && data.production_countries[0].iso_3166_1) || null);
+
     out.push({
       key: c.key,
       tmdb_id: c.tmdb_id,
       type: c.type,
       title: c.title,
-      year,
+      year: c.release_date ? c.release_date.slice(0, 4) : '',
       release_date: c.release_date,
+      is_upcoming: !!c.is_upcoming,
       rating: Math.round(c.vote_average * 10) / 10,
       vote_count: c.vote_count,
-      genres,
-      providers,
-      overview: c.overview,
-      is_upcoming: !!c.is_upcoming,
       taste_score: c.taste_score,
+      genres: genreNames,
+      genre_ids: c.genre_ids,
+      providers: Array.from(providerNames).sort(),
+      providers_app: Array.from(providerAppIds),
+      cast: castNames,
+      country,
+      runtime: c.type === 'movie' ? (data.runtime || null) : null,
+      seasons: c.type === 'tv' ? (data.number_of_seasons || null) : null,
+      episodes: c.type === 'tv' ? (data.number_of_episodes || null) : null,
+      overview: data.overview || c.overview || '',
+      poster_path: data.poster_path || c.poster_path,
+      backdrop_path: data.backdrop_path || c.backdrop_path,
+      reason: buildReason(c, taste, castList),
+      fan_of: pickFanOf(c, tasteSample),
     });
   }
   return out;
 }
 
-async function getStreamingProviders(mediaType, tmdbId, env) {
-  const data = await tmdbGet(`${mediaType}/${tmdbId}/watch/providers`, null, env);
-  if (!data || !data.results || !data.results.DE) return [];
-  const de = data.results.DE;
-  const providers = new Set();
-  for (const cat of ['flatrate', 'free', 'ads']) {
-    for (const p of de[cat] || []) {
-      if (PROVIDER_IDS[p.provider_id]) providers.add(PROVIDER_IDS[p.provider_id]);
+// Rule-based "Warum fuer dich" — composed from the taste-match factors that
+// actually fired for this item. Lean v1: no LLM involved.
+function buildReason(c, taste, castList) {
+  const parts = [];
+
+  const matchedGenres = (c.genre_ids || [])
+    .filter((gid) => (taste.genres[gid] || 0) >= 0.4)
+    .sort((a, b) => (taste.genres[b] || 0) - (taste.genres[a] || 0))
+    .slice(0, 2)
+    .map((gid) => GENRE_MAP[gid])
+    .filter(Boolean);
+  if (matchedGenres.length > 0) {
+    parts.push(`${matchedGenres.join(' + ')} ${matchedGenres.length > 1 ? 'treffen' : 'trifft'} dein Profil`);
+  }
+
+  const tasteCast = castList.find((m) => m.id && (taste.cast[m.id] || 0) > 0);
+  if (tasteCast) {
+    parts.push(`mit ${tasteCast.name} aus deinem Profil`);
+  }
+
+  const year = c.release_year || parseReleaseYear(c);
+  if (year && parts.length < 3) {
+    const decade = Math.floor(year / 10) * 10;
+    if ((taste.decades[decade] || 0) >= 0.6) {
+      parts.push(`${decade}er liegen dir`);
     }
   }
-  return Array.from(providers).sort();
+
+  if (parts.length < 3 && typeof c.vote_average === 'number' && c.vote_average > 0
+      && Math.abs(c.vote_average - taste.avg_rating) <= 0.7) {
+    parts.push(`Bewertung auf deinem Niveau`);
+  }
+
+  if (parts.length === 0) {
+    parts.push('Insgesamt nah an deinem Geschmacksprofil');
+  }
+  return parts.slice(0, 3).join(' · ');
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Telegram formatting
-// ─────────────────────────────────────────────────────────────────────────
-
-function formatTelegramMessage(primary, secondary, ownerKey) {
-  const today = new Date();
-  const weekdays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-  const dd = String(today.getDate()).padStart(2, '0');
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const yyyy = today.getFullYear();
-  const header = `🎬 <b>Heute streamen — ${weekdays[today.getDay()]}, ${dd}.${mm}.${yyyy}</b>`;
-  const total = primary.length + secondary.length;
-  const lines = [header, `${total} Empfehlungen auf deinen Streaming-Diensten`, ''];
-
-  if (primary.length > 0) {
-    lines.push('🆕 <b>GERADE AUF DEINEN DIENSTEN</b>');
-    for (const rec of primary) lines.push(...formatItemLines(rec, false, ownerKey));
+// "Fuer Fans von" — watchlist sample title with max genre overlap.
+// Known v1 quality limit: genre-based similarity is coarse (documented in plan).
+function pickFanOf(c, tasteSample) {
+  if (!Array.isArray(tasteSample) || tasteSample.length === 0) return null;
+  const cGenres = new Set(c.genre_ids || []);
+  if (cGenres.size === 0) return null;
+  let best = null;
+  let bestOverlap = 0;
+  for (const s of tasteSample) {
+    const overlap = (s.genre_ids || []).filter((g) => cGenres.has(g)).length;
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      best = s;
+    }
   }
-  if (secondary.length > 0) {
-    lines.push('📅 <b>NEU IN DEN NÄCHSTEN WOCHEN</b>');
-    for (const rec of secondary) lines.push(...formatItemLines(rec, true, ownerKey));
-  }
-  return lines.join('\n');
-}
-
-function formatItemLines(rec, showReleaseInTitle, ownerKey) {
-  const icon = rec.type === 'tv' ? '📺' : '🎬';
-  const providers = rec.providers.join(', ');
-  const ratingStr = rec.vote_count >= MIN_VOTES ? ` · ⭐ ${rec.rating}` : '';
-  const dateInfo = formatReleaseDate(rec.release_date, rec.is_upcoming);
-  const titleBlock = showReleaseInTitle && dateInfo
-    ? `${icon} <b>${escapeHtml(rec.title)}</b> (${dateInfo})${ratingStr} · ${providers}`
-    : `${icon} <b>${escapeHtml(rec.title)}</b> (${rec.year})${ratingStr} · ${providers}`;
-  const lines = [titleBlock];
-  if (!showReleaseInTitle && dateInfo) {
-    lines.push(`<i>${escapeHtml(rec.genres)}</i> · ${dateInfo}`);
-  } else if (rec.genres) {
-    lines.push(`<i>${escapeHtml(rec.genres)}</i>`);
-  }
-  if (rec.overview) {
-    const ov = rec.overview.length > 140 ? rec.overview.slice(0, 140) + '…' : rec.overview;
-    lines.push(`→ ${escapeHtml(ov)}`);
-  }
-  lines.push(itemLinks(rec, ownerKey));
-  lines.push('');
-  return lines;
-}
-
-function itemLinks(rec, ownerKey) {
-  const detailsUrl = `${TMDB_WEB_BASE}/${rec.type}/${rec.tmdb_id}`;
-  const addUrl = `${WATCHLIST_APP_URL}?key=${encodeURIComponent(ownerKey)}&add=${rec.tmdb_id}&type=${rec.type}`;
-  return `<a href="${escapeHtml(detailsUrl)}">Details</a>  ·  <a href="${escapeHtml(addUrl)}">+ Watchlist</a>`;
-}
-
-function formatReleaseDate(releaseDate, isUpcoming) {
-  if (!releaseDate) return '';
-  const d = new Date(releaseDate);
-  if (Number.isNaN(d.getTime())) return '';
-  const ddmm = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
-  if (isUpcoming) {
-    return `ab ${ddmm}.${d.getFullYear()}`;
-  }
-  const daysAgo = Math.floor((Date.now() - d.getTime()) / 86400000);
-  if (daysAgo <= 7) return 'diese Woche';
-  if (daysAgo <= 14) return 'letzte Woche';
-  return `seit ${ddmm}.`;
-}
-
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+  const minOverlap = cGenres.size === 1 ? 1 : 2;
+  return bestOverlap >= minOverlap ? best.title : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -871,17 +902,14 @@ function addDays(d, n) {
   return out;
 }
 
+function isoWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
-
-function interleave(a, b) {
-  const out = [];
-  const max = Math.max(a.length, b.length);
-  for (let i = 0; i < max; i++) {
-    if (i < a.length) out.push(a[i]);
-    if (i < b.length) out.push(b[i]);
-  }
-  return out;
-}
-

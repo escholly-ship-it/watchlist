@@ -76,6 +76,9 @@
       <button class="filter-chip sort-chip" data-sort="alpha">A–Z</button>
     </div>
 
+    <!-- Wochen-Magazin Teaser (WL-5) -->
+    <section class="magazine-teaser hidden" id="magazineTeaser"></section>
+
     <!-- Shortlist -->
     <section class="shortlist-section hidden" id="shortlistSection">
       <h2 class="shortlist-title">Shortlist</h2>
@@ -129,6 +132,18 @@
         <div class="detail-backdrop" id="detailBackdrop"></div>
         <div class="detail-content" id="detailContent"></div>
       </div>
+    </div>
+
+    <!-- Wochen-Magazin Reader (WL-5) -->
+    <div class="magazine-reader hidden" id="magazineReader" role="dialog" aria-label="Wochen-Magazin">
+      <div class="magazine-reader-top">
+        <span class="magazine-reader-issue" id="magazineIssue"></span>
+        <span class="magazine-reader-progress" id="magazineProgress"></span>
+        <button class="magazine-reader-close" id="magazineClose" aria-label="Magazin schließen">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="magazine-reader-track" id="magazineTrack"></div>
     </div>
   </div>
 

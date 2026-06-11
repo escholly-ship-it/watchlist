@@ -10,12 +10,12 @@ compatibility_flags = ["nodejs_compat"]
 binding = "WATCHLIST_KV"
 id = "d21a31cf2f614d05a1d5767954abc5c6"
 
-# Daily recommendation pipeline — 16:35 UTC = 18:35 MESZ (Sommerzeit)
+# Weekly magazine build — Friday 16:00 UTC = 18:00 MESZ (Wochenend-Start)
 # Weekly taste-profile rebuild — Sunday 03:00 UTC (off-peak, refreshes KV cache)
-# Plan B (2026-05-14): consolidates Mac LaunchAgent + GHA + CC-routine into the worker.
+# WL-5 (2026-06-11): weekly magazine replaces the daily recommendation cron.
 # Two-cron split keeps each invocation under the Workers Free 50-subrequest cap.
 [triggers]
-crons = ["35 16 * * *", "0 3 * * SUN"]
+crons = ["0 16 * * FRI", "0 3 * * SUN"]
 
 # Observability — make `wrangler tail` show structured logs.
 [observability]
@@ -23,8 +23,8 @@ enabled = true
 
 # ── Required secrets (set via `wrangler secret put <NAME>`) ────────────────
 # API_KEY              — legacy owner-key for /sync endpoint (PWA, optional)
-# ADMIN_KEY            — gate for POST /recommend manual trigger
+# ADMIN_KEY            — gate for POST /magazine-build manual trigger
 # OWNER_SYNC_KEY       — Scholly's 32-char sync-key; used as KV-namespace owner
 # TMDB_API_KEY         — TMDB v3 API key
-# TELEGRAM_BOT_TOKEN   — Telegram bot token
+# TELEGRAM_BOT_TOKEN   — Telegram bot token (nur Fehler-Ping, kein Erfolgs-Ping)
 # TELEGRAM_CHAT_ID     — Telegram chat ID (recipient)
