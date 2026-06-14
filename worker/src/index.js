@@ -2,17 +2,21 @@
 // Multi-tenant: each sync key = separate watchlist namespace
 //
 // Endpoints:
-//   GET  /sync           — return owner's watchlist (auth: X-API-Key header)
-//   PUT  /sync           — save owner's watchlist (auth: X-API-Key header)
-//   GET  /magazine       — return current weekly magazine JSON (auth: X-API-Key)
+//   GET  /sync           — return the caller's watchlist (auth: X-API-Key header)
+//   PUT  /sync           — save the caller's watchlist (auth: X-API-Key header)
+//   GET  /magazine       — return the caller's weekly magazine JSON (auth: X-API-Key)
 //   POST /magazine-build — manual trigger of magazine pipeline
 //                          auth: X-Admin-Key header == env.ADMIN_KEY
-//                          ?dryRun=1 → skip Telegram + KV writes, return preview JSON
+//                          ?dryRun=1   → skip Telegram + KV writes, return preview JSON
+//                          ?member=KEY → build a specific member (default: owner)
 //   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
+//                          ?member=KEY → rebuild a specific member (default: owner)
 //
-// Scheduled handler (see wrangler.toml [triggers].crons):
-//   "0 16 * * FRI" → weekly magazine build (18:00 MESZ, Wochenend-Start)
-//   "0 3 * * SUN"  → weekly taste-profile rebuild
+// Scheduled handler (see wrangler.toml [triggers].crons) — WL-11 multi-tenant:
+//   "0 3 * * *"  → daily taste pre-warm for that day's roster member
+//   "0 16 * * *" → daily magazine build for that day's roster member
+//   Member = roster[floor(scheduledTime/86400000) % roster.length] — a
+//   stateless round-robin: both crons pick the SAME member on a given UTC day.
 //
 // WL-5 (2026-06-11): Wochen-Magazin ersetzt die taegliche Telegram-Empfehlung.
 //   Kein popular-per-provider-Katalogbestand mehr — nur Neuerscheinungen
@@ -21,6 +25,12 @@
 //   beim Oeffnen) — Telegram nur noch im Fehlerfall (silent-stale-Schutz,
 //   Customer-Entscheid 2026-06-11). Subrequest-Budget hart gedeckelt
 //   (Free-Tier 50/Invocation).
+// WL-11 (2026-06-14): Magazin pro Familienmitglied. Die Build-Pipeline ist auf
+//   einen `syncKey` parametrisiert (Default = Owner); ein KV-Roster
+//   (config:magazine_members) listet die Member, der Owner ist immer dabei.
+//   Crons rotieren zustandslos ueber den Roster (ein Member pro Tag), jede
+//   Invocation = ein Member = frisches 50-Subrequest-Budget. Read-Seite war
+//   schon multi-tenant (magazine:${apiKey}) — keine App-Aenderung noetig.
 // Plan B (2026-05-14): Producer-Konsolidierung Mac/GHA/CC → Worker als
 //   single source. Match-Schwelle MEDIUM = scoreWithTaste >= 0.35.
 
@@ -111,12 +121,22 @@ const MAGAZINE_LOOKBACK_DAYS = 30;   // "neu" window: released within last 30d
 const MAGAZINE_LOOKAHEAD_DAYS = 14;  // "demnaechst" window: next 14d
 const MAGAZINE_SEEN_DAYS = 35;       // dedup window vs previous issues
 const MAGAZINE_MIN_NEW_CANDIDATES = 5; // below this → fetch discover page 2
-const TMDB_CALL_CEILING = 40;        // runtime guard (gate test asserts ≤45 total)
+const TMDB_CALL_CEILING = 40;        // runtime guard on TMDB calls per invocation
 
-// Module-level TMDB call counter. Reset per pipeline run; cron fires once a
-// week and manual triggers are rare, so cross-invocation interleaving is not
-// a practical concern on this single-tenant worker.
+// WL-11: roster of sync-keys that each get a personal weekly magazine. Lives in
+// KV as a JSON array; the owner is always included unconditionally (see
+// loadMagazineRoster). The 40-char all-'a' dev/test key is hard-excluded.
+const MAGAZINE_ROSTER_KEY = 'config:magazine_members';
+const TEST_SYNC_KEY = 'a'.repeat(40);
+
+// Per-invocation subrequest counters, reset at the start of each pipeline /
+// taste-rebuild run. tmdbCalls gates enrichment (TMDB_CALL_CEILING); kvCalls
+// makes the dryRun subrequest report honest — KV ops count toward the Free-tier
+// 50/invocation wall just like fetches. WL-11 fires ONE member per cron run
+// (stateless round-robin on event.scheduledTime), so there is no cross-member
+// counter leak: each invocation is a fresh isolate.
 let tmdbCalls = 0;
+let kvCalls = 0;
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP entrypoints
@@ -139,10 +159,12 @@ export default {
       if (!env.ADMIN_KEY || adminKey !== env.ADMIN_KEY) {
         return jsonResponse({ error: 'Unauthorized' }, 401);
       }
-      await rebuildTasteProfileCache(env);
-      const cached = await env.WATCHLIST_KV.get(tasteCacheKey(env), 'json');
+      const member = url.searchParams.get('member') || env.OWNER_SYNC_KEY;
+      await rebuildTasteProfileCache(env, member);
+      const cached = await kvGet(env, tasteCacheKey(member), 'json');
       return jsonResponse({
         ok: true,
+        member: member.slice(0, 8),
         ts: cached && cached.ts,
         genres: cached && cached.profile && Object.keys(cached.profile.genres).length,
         decades: cached && cached.profile && Object.keys(cached.profile.decades).length,
@@ -160,13 +182,13 @@ export default {
     const kvKey = `watchlist:${apiKey}`;
 
     if (url.pathname === '/sync' && request.method === 'GET') {
-      let data = await env.WATCHLIST_KV.get(kvKey, 'json');
+      let data = await kvGet(env, kvKey, 'json');
       // Legacy single-tenant migration (kept from previous worker version)
       if (!data) {
-        const legacy = await env.WATCHLIST_KV.get('watchlist', 'json');
+        const legacy = await kvGet(env, 'watchlist', 'json');
         if (legacy && apiKey === env.API_KEY) {
-          await env.WATCHLIST_KV.put(kvKey, JSON.stringify(legacy));
-          await env.WATCHLIST_KV.delete('watchlist');
+          await kvPut(env, kvKey, JSON.stringify(legacy));
+          await kvDelete(env, 'watchlist');
           data = legacy;
         }
       }
@@ -178,12 +200,12 @@ export default {
       if (!Array.isArray(body.items)) {
         return jsonResponse({ error: 'items must be an array' }, 400);
       }
-      await env.WATCHLIST_KV.put(kvKey, JSON.stringify(body.items));
+      await kvPut(env, kvKey, JSON.stringify(body.items));
       return jsonResponse({ ok: true, count: body.items.length, timestamp: Date.now() });
     }
 
     if (url.pathname === '/magazine' && request.method === 'GET') {
-      const magazine = await env.WATCHLIST_KV.get(`magazine:${apiKey}`, 'json');
+      const magazine = await kvGet(env, `magazine:${apiKey}`, 'json');
       return jsonResponse({ magazine: magazine || null, timestamp: Date.now() });
     }
 
@@ -191,13 +213,20 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Two cron schedules — see wrangler.toml [triggers].crons:
-    //   "0 16 * * FRI" → weekly magazine build
-    //   "0 3 * * SUN"  → weekly taste-profile rebuild
-    if (event.cron === '0 3 * * SUN') {
-      ctx.waitUntil(rebuildTasteProfileCache(env));
-    } else if (event.cron === '0 16 * * FRI') {
-      ctx.waitUntil(runMagazinePipeline(env, { dryRun: false, source: 'cron' }));
+    // WL-11: stateless round-robin over the magazine roster. Both crons derive
+    // the SAME member index from event.scheduledTime (UTC ms) on a given day —
+    // 03:00 and 16:00 fall in the same UTC day, so floor(t/86400000) is equal —
+    // hence the taste pre-warm and the magazine build always target the same
+    // member. No stored cursor, no decoupled sequences.
+    //   "0 3 * * *"  → daily taste pre-warm for that day's member (if stale)
+    //   "0 16 * * *" → daily magazine build for that day's member
+    const roster = await loadMagazineRoster(env);
+    const idx = Math.floor(event.scheduledTime / 86400000) % roster.length;
+    const member = roster[idx];
+    if (event.cron === '0 3 * * *') {
+      ctx.waitUntil(prewarmTasteIfStale(env, member));
+    } else if (event.cron === '0 16 * * *') {
+      ctx.waitUntil(runMagazinePipeline(env, { dryRun: false, source: 'cron', syncKey: member }));
     } else {
       console.warn('Unknown cron trigger:', event.cron);
     }
@@ -210,7 +239,11 @@ async function handleMagazineBuild(request, env, ctx, url) {
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
   const dryRun = url.searchParams.get('dryRun') === '1';
-  const result = await runMagazinePipeline(env, { dryRun, source: 'manual' });
+  // ?member=<sync-key> builds a specific member (defaults to owner). The manual
+  // path is deliberately independent of the cron's round-robin index so an
+  // operator never silently targets a different member than intended.
+  const member = url.searchParams.get('member') || env.OWNER_SYNC_KEY;
+  const result = await runMagazinePipeline(env, { dryRun, source: 'manual', syncKey: member });
   return jsonResponse(result);
 }
 
@@ -222,12 +255,87 @@ function jsonResponse(data, status = 200) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// KV access — subrequest-counting wrappers (WL-11)
+// Every KV op goes through these so kvCalls reflects the real Free-tier
+// subrequest cost. No direct env.WATCHLIST_KV access anywhere else.
+// ─────────────────────────────────────────────────────────────────────────
+
+function kvGet(env, key, type = 'json') {
+  kvCalls++;
+  return env.WATCHLIST_KV.get(key, type);
+}
+
+function kvPut(env, key, value) {
+  kvCalls++;
+  return env.WATCHLIST_KV.put(key, value);
+}
+
+function kvDelete(env, key) {
+  kvCalls++;
+  return env.WATCHLIST_KV.delete(key);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Magazine roster (WL-11) — who gets a personal weekly magazine
+// ─────────────────────────────────────────────────────────────────────────
+
+// Effective roster = [owner, ...allowlisted family keys]. The owner is ALWAYS
+// roster[0] and unconditional, so (a) a roster edit can never drop the owner's
+// own magazine and (b) roster.length >= 1 is guaranteed — idx % length is never
+// NaN, so we can never write magazine:undefined. The whole construction is
+// wrapped in try/catch: a missing, non-JSON, or non-array config all degrade
+// to owner-only instead of throwing (e.g. config '"x"' parses to a String,
+// whose .filter would otherwise throw a TypeError).
+async function loadMagazineRoster(env) {
+  const owner = env.OWNER_SYNC_KEY;
+  let extra = [];
+  try {
+    const raw = await kvGet(env, MAGAZINE_ROSTER_KEY, 'json');
+    if (Array.isArray(raw)) {
+      extra = raw.filter((k) =>
+        typeof k === 'string' &&
+        k.length >= MIN_KEY_LENGTH &&
+        k !== owner &&
+        k !== TEST_SYNC_KEY,
+      );
+    }
+  } catch (err) {
+    console.error('Roster load failed — owner-only fallback:', err && err.message ? err.message : String(err));
+    extra = [];
+  }
+  return [owner, ...extra];
+}
+
+// Best-effort taste pre-warm: rebuild the member's taste profile only if it is
+// missing or past its TTL. Runs at 03:00 for the same member the 16:00 magazine
+// build will target, so the build normally finds a warm cache. If this fails or
+// the cache expires between 03:00 and 16:00, the magazine build is still
+// self-sufficient (loadOrBuildTasteProfile rebuilds inline) — so a member never
+// loses their issue on their day.
+async function prewarmTasteIfStale(env, syncKey) {
+  try {
+    const cached = await kvGet(env, tasteCacheKey(syncKey), 'json');
+    if (cached && cached.ts && cached.profile) {
+      const ageDays = (Date.now() / 1000 - cached.ts) / 86400;
+      if (ageDays < TASTE_CACHE_TTL_DAYS) {
+        console.log(`Taste pre-warm: fresh for ${String(syncKey).slice(0, 8)} (${ageDays.toFixed(1)}d) — skip`);
+        return;
+      }
+    }
+    await rebuildTasteProfileCache(env, syncKey);
+  } catch (err) {
+    console.error('Taste pre-warm failed (best-effort):', err && err.message ? err.message : String(err));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Magazine pipeline (WL-5)
 // ─────────────────────────────────────────────────────────────────────────
 
-async function runMagazinePipeline(env, { dryRun, source }) {
+async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
   const startedAt = Date.now();
   tmdbCalls = 0;
+  kvCalls = 0;
   const log = [];
   const note = (msg) => { log.push(msg); console.log(msg); };
 
@@ -235,7 +343,12 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     requireSecret(env, 'OWNER_SYNC_KEY');
     requireSecret(env, 'TMDB_API_KEY');
 
-    const watchlist = await loadOwnerWatchlist(env);
+    // WL-11: build for the given member (defaults to owner — backward-safe for
+    // the manual /magazine-build path). All KV sub-keys are scoped to `owner`.
+    const owner = syncKey || env.OWNER_SYNC_KEY;
+    note(`Building magazine for ${String(owner).slice(0, 8)} (source=${source})`);
+
+    const watchlist = await loadWatchlist(env, owner);
     note(`Watchlist: ${watchlist.length} items`);
 
     const watchlistIds = new Set(
@@ -245,8 +358,8 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     );
 
     const { profile: taste, sample: tasteSample } =
-      await loadOrBuildTasteProfile(watchlist, env, note);
-    const seen = await loadMagazineSeen(env);
+      await loadOrBuildTasteProfile(watchlist, env, owner, note);
+    const seen = await loadMagazineSeen(env, owner);
     note(`Magazine seen state: ${Object.keys(seen).length} entries (last ${MAGAZINE_SEEN_DAYS}d)`);
 
     const today = new Date();
@@ -293,17 +406,20 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     upItems.sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
     note(`Enriched: neu=${neuItems.length} demnaechst=${upItems.length} (tmdbCalls=${tmdbCalls})`);
 
-    const subrequests = {
-      tmdb: tmdbCalls,
-      kv_est: 8,
-      total_est: tmdbCalls + 8,
-    };
-
+    // Honest subrequest accounting (WL-11): tmdb + kv are both measured, no
+    // estimate. The two KV writes further down (magazine + seen) are added
+    // explicitly to the dryRun report so it matches a real build's cost; the
+    // live return re-reads the counters after those writes. The cron path adds
+    // one more KV read (the roster) outside this function.
     if (neuItems.length === 0 && upItems.length === 0) {
       const msg = 'Magazin diese Woche uebersprungen — keine passenden Neuerscheinungen gefunden.';
       note(msg);
       if (!dryRun) await postTelegram(`⚠️ ${msg}`, env);
-      return { ok: false, source, skipped: true, message: msg, subrequests, log, elapsedMs: Date.now() - startedAt };
+      return {
+        ok: false, source, skipped: true, message: msg,
+        subrequests: { tmdb: tmdbCalls, kv: kvCalls, total: tmdbCalls + kvCalls },
+        log, elapsedMs: Date.now() - startedAt,
+      };
     }
 
     const issueWeek = isoWeek(today);
@@ -323,17 +439,23 @@ async function runMagazinePipeline(env, { dryRun, source }) {
     };
 
     if (dryRun) {
-      return { ok: true, source, dryRun: true, magazine, subrequests, log, elapsedMs: Date.now() - startedAt };
+      // +2 for the magazine + seen writes a real build would perform.
+      const kvLive = kvCalls + 2;
+      return {
+        ok: true, source, dryRun: true, magazine,
+        subrequests: { tmdb: tmdbCalls, kv: kvLive, total: tmdbCalls + kvLive },
+        log, elapsedMs: Date.now() - startedAt,
+      };
     }
 
-    await env.WATCHLIST_KV.put(`magazine:${env.OWNER_SYNC_KEY}`, JSON.stringify(magazine));
+    await kvPut(env, `magazine:${owner}`, JSON.stringify(magazine));
 
     // Update seen state so next issue does not repeat titles
     const now = Math.floor(Date.now() / 1000);
     for (const it of [...neuItems, ...upItems]) {
       seen[it.key] = { title: it.title, ts: now, date: todayStr };
     }
-    await saveMagazineSeen(env, seen);
+    await saveMagazineSeen(env, owner, seen);
 
     // Customer-Entscheid 2026-06-11: kein Erfolgs-Ping — die App selbst zeigt
     // die neue Ausgabe beim Oeffnen (Teaser-Karte). Telegram nur im Fehlerfall
@@ -344,7 +466,7 @@ async function runMagazinePipeline(env, { dryRun, source }) {
       source,
       issue: magazine.issue,
       counts: magazine.counts,
-      subrequests,
+      subrequests: { tmdb: tmdbCalls, kv: kvCalls, total: tmdbCalls + kvCalls },
       log,
       elapsedMs: Date.now() - startedAt,
     };
@@ -369,13 +491,13 @@ function requireSecret(env, name) {
 // KV: owner watchlist + magazine seen state
 // ─────────────────────────────────────────────────────────────────────────
 
-async function loadOwnerWatchlist(env) {
-  const data = await env.WATCHLIST_KV.get(`watchlist:${env.OWNER_SYNC_KEY}`, 'json');
+async function loadWatchlist(env, syncKey) {
+  const data = await kvGet(env, `watchlist:${syncKey}`, 'json');
   return Array.isArray(data) ? data : [];
 }
 
-async function loadMagazineSeen(env) {
-  const raw = await env.WATCHLIST_KV.get(`magazine_seen:${env.OWNER_SYNC_KEY}`, 'json');
+async function loadMagazineSeen(env, syncKey) {
+  const raw = await kvGet(env, `magazine_seen:${syncKey}`, 'json');
   if (!raw || typeof raw !== 'object') return {};
   const cutoff = Math.floor(Date.now() / 1000) - MAGAZINE_SEEN_DAYS * 86400;
   const fresh = {};
@@ -385,8 +507,8 @@ async function loadMagazineSeen(env) {
   return fresh;
 }
 
-async function saveMagazineSeen(env, state) {
-  await env.WATCHLIST_KV.put(`magazine_seen:${env.OWNER_SYNC_KEY}`, JSON.stringify(state));
+async function saveMagazineSeen(env, syncKey, state) {
+  await kvPut(env, `magazine_seen:${syncKey}`, JSON.stringify(state));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -423,12 +545,12 @@ async function tmdbGet(path, params, env) {
 // Taste profile (multi-factor: genres + decades + cast + avg_rating)
 // ─────────────────────────────────────────────────────────────────────────
 
-function tasteCacheKey(env) {
-  return `taste:${env.OWNER_SYNC_KEY}`;
+function tasteCacheKey(syncKey) {
+  return `taste:${syncKey}`;
 }
 
-async function loadOrBuildTasteProfile(watchlist, env, note) {
-  const cached = await env.WATCHLIST_KV.get(tasteCacheKey(env), 'json');
+async function loadOrBuildTasteProfile(watchlist, env, syncKey, note) {
+  const cached = await kvGet(env, tasteCacheKey(syncKey), 'json');
   if (cached && cached.ts && cached.profile) {
     const ageDays = (Date.now() / 1000 - cached.ts) / 86400;
     if (ageDays < TASTE_CACHE_TTL_DAYS) {
@@ -440,26 +562,29 @@ async function loadOrBuildTasteProfile(watchlist, env, note) {
     note('Taste profile: no KV cache — building inline');
   }
   const { profile, sample } = await buildTasteProfile(watchlist, env);
-  await env.WATCHLIST_KV.put(
-    tasteCacheKey(env),
+  await kvPut(
+    env,
+    tasteCacheKey(syncKey),
     JSON.stringify({ profile, sample, ts: Math.floor(Date.now() / 1000) }),
   );
   return { profile, sample };
 }
 
-async function rebuildTasteProfileCache(env) {
-  console.log('Weekly taste-profile rebuild starting');
+async function rebuildTasteProfileCache(env, syncKey) {
+  console.log(`Taste-profile rebuild starting for ${String(syncKey).slice(0, 8)}`);
   tmdbCalls = 0;
+  kvCalls = 0;
   requireSecret(env, 'OWNER_SYNC_KEY');
   requireSecret(env, 'TMDB_API_KEY');
-  const watchlist = await loadOwnerWatchlist(env);
+  const watchlist = await loadWatchlist(env, syncKey);
   if (watchlist.length === 0) {
     console.log('Watchlist empty — skipping taste-profile rebuild');
     return;
   }
   const { profile, sample } = await buildTasteProfile(watchlist, env);
-  await env.WATCHLIST_KV.put(
-    tasteCacheKey(env),
+  await kvPut(
+    env,
+    tasteCacheKey(syncKey),
     JSON.stringify({ profile, sample, ts: Math.floor(Date.now() / 1000) }),
   );
   console.log(`Taste profile rebuilt and cached: genres=${Object.keys(profile.genres).length} decades=${Object.keys(profile.decades).length} cast=${Object.keys(profile.cast).length} sample=${sample.length}`);
