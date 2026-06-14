@@ -557,6 +557,22 @@ body {
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
 
+/* Vorgemerkt badge — service-less (upcoming) items, same slot as service-badge */
+.card-badge-vorgemerkt {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #3a2410;
+  background: var(--tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
 /* ---- Empty State ---- */
 .empty-state {
   grid-column: 1 / -1;
