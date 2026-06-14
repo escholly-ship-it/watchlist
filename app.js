@@ -1161,6 +1161,8 @@ function bindEvents() {
 // ---- Wochen-Magazin (WL-5) ----
 const MAGAZINE_URL = 'https://watchlist-sync.escholly.workers.dev/magazine';
 let magazine = null;
+let magCurrentIdx = 0;        // current card in the reader (driven by IntersectionObserver)
+let magObserver = null;       // IntersectionObserver tracking the most-visible card
 
 const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -1263,7 +1265,6 @@ function magazineCardHtml(it, i) {
   // overlay stays clean (posters often print the title onto the artwork).
   const hero = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
   const genre = (it.genres && it.genres[0]) || (it.type === 'tv' ? 'Serie' : 'Film');
-  const onList = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
 
   const heroTags = [esc(genre.toUpperCase())];
   if (it.certification) heroTags.push(`FSK ${esc(it.certification)}`);
@@ -1278,8 +1279,9 @@ function magazineCardHtml(it, i) {
         <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
       </a>` : '';
 
-  const upBadge = it.is_upcoming && it.release_date
-    ? `<span class="mag-card-up">ab ${formatShortDate(it.release_date)}</span>` : '';
+  const badgeDate = it.upcoming_date || it.release_date;
+  const upBadge = it.is_upcoming && badgeDate
+    ? `<span class="mag-card-up">ab ${formatShortDate(badgeDate)}</span>` : '';
 
   const tagline = it.tagline ? `<p class="mag-tagline">„${esc(it.tagline)}"</p>` : '';
 
@@ -1348,9 +1350,6 @@ function magazineCardHtml(it, i) {
       ${reason}
       ${tags}
       ${recs}
-      <button class="mag-add-btn${onList ? ' added' : ''}" data-idx="${i}" ${onList ? 'disabled' : ''}>
-        ${onList ? '✓ Auf deiner Liste' : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist')}
-      </button>
     </div>
   </article>`;
 }
@@ -1376,17 +1375,32 @@ function openMagazineReader() {
   $track.scrollTop = 0;
   updateMagazineProgress(0, all.length);
 
-  $track.onscroll = () => {
-    const idx = Math.round($track.scrollTop / $track.clientHeight);
-    updateMagazineProgress(Math.min(Math.max(idx, 0), all.length - 1), all.length);
-  };
+  magCurrentIdx = 0;
+  updateFab(0);
 
-  $track.querySelectorAll('.mag-add-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.idx, 10);
-      if (!Number.isNaN(idx) && all[idx]) addFromMagazine(all[idx], btn);
-    });
-  });
+  // Most-visible card wins — robust even when a card is taller than the track
+  // viewport (the old scrollTop/clientHeight assumption broke for v2 cards).
+  // Drives both the progress label and the floating add-button state.
+  if (magObserver) magObserver.disconnect();
+  const cards = Array.from($track.querySelectorAll('.mag-card'));
+  const ratios = new Array(cards.length).fill(0);
+  magObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const i = cards.indexOf(e.target);
+      if (i >= 0) ratios[i] = e.intersectionRatio;
+    }
+    let best = 0;
+    let bestR = -1;
+    for (let i = 0; i < ratios.length; i++) {
+      if (ratios[i] > bestR) { bestR = ratios[i]; best = i; }
+    }
+    if (best !== magCurrentIdx) {
+      magCurrentIdx = best;
+      updateMagazineProgress(best, all.length);
+      updateFab(best);
+    }
+  }, { root: $track, threshold: [0, 0.25, 0.5, 0.75, 1] });
+  cards.forEach((card) => magObserver.observe(card));
 }
 
 function closeMagazineReader() {
@@ -1394,17 +1408,30 @@ function closeMagazineReader() {
   if (!$reader || $reader.classList.contains('hidden')) return;
   $reader.classList.add('hidden');
   document.body.classList.remove('mag-open');
+  if (magObserver) { magObserver.disconnect(); magObserver = null; }
 }
 
-function markMagazineAdded(btn) {
-  btn.classList.add('added');
-  btn.disabled = true;
-  btn.textContent = '✓ Auf deiner Liste';
+// Floating add-button: state derived FRESH from `items` (the live watchlist) on
+// every card change — never cached in the DOM. Scrolling away from an added
+// card and back shows "✓ Auf deiner Liste" correctly.
+function updateFab(idx) {
+  const btn = document.getElementById('magazineAddBtn');
+  if (!btn) return;
+  const all = magazineItems();
+  const it = all[idx];
+  if (!it) return;
+  const onList = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
+  btn.classList.toggle('added', onList);
+  btn.disabled = onList;
+  btn.textContent = onList
+    ? '✓ Auf deiner Liste'
+    : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist');
 }
 
-async function addFromMagazine(it, btn) {
-  const existing = items.find(x => x.tmdbId === it.tmdb_id && x.type === it.type);
-  if (existing) { markMagazineAdded(btn); return; }
+// Returns true if the title is on the watchlist afterwards. Decoupled from any
+// DOM button so the single floating button can drive it (P1-2).
+async function addFromMagazine(it) {
+  if (items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type)) return true;
 
   if (Array.isArray(it.providers_app) && it.providers_app.length > 0) {
     // All data already in the magazine JSON — add without client roundtrips
@@ -1428,21 +1455,12 @@ async function addFromMagazine(it, btn) {
     saveItems();
     renderFilterBar();
     renderWatchlist();
-    markMagazineAdded(btn);
     showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
-  } else {
-    // No provider known yet (e.g. far-out upcoming) — full lookup path
-    btn.disabled = true;
-    btn.textContent = 'Wird hinzugefügt…';
-    await handleAutoAdd(it.tmdb_id, it.type);
-    const ok = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
-    if (ok) {
-      markMagazineAdded(btn);
-    } else {
-      btn.disabled = false;
-      btn.textContent = it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist';
-    }
+    return true;
   }
+  // No provider known yet (e.g. far-out upcoming) — full lookup path
+  await handleAutoAdd(it.tmdb_id, it.type);
+  return items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
 }
 
 const $magClose = document.getElementById('magazineClose');
@@ -1450,6 +1468,19 @@ if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeMagazineReader();
 });
+
+const $magAddBtn = document.getElementById('magazineAddBtn');
+if ($magAddBtn) {
+  $magAddBtn.addEventListener('click', async () => {
+    if ($magAddBtn.disabled) return;
+    const it = magazineItems()[magCurrentIdx];
+    if (!it) return;
+    $magAddBtn.disabled = true;
+    $magAddBtn.textContent = 'Wird hinzugefügt…';
+    await addFromMagazine(it);
+    updateFab(magCurrentIdx);
+  });
+}
 
 // ---- Boot ----
 init();
