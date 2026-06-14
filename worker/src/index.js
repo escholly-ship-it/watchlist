@@ -118,7 +118,8 @@ const MAGAZINE_NEW_COUNT = 8;        // Rubrik "Neu fuer dich"
 const MAGAZINE_UPCOMING_COUNT = 4;   // Rubrik "Demnaechst"
 const MAGAZINE_ENRICH_CAP = 16;      // hard cap on per-title detail calls
 const MAGAZINE_LOOKBACK_DAYS = 30;   // "neu" window: released within last 30d
-const MAGAZINE_LOOKAHEAD_DAYS = 14;  // "demnaechst" window: next 14d
+const MAGAZINE_LOOKAHEAD_DAYS = 14;  // legacy "demnaechst" window (pre-WL-9)
+const MAGAZINE_UPCOMING_DAYS = 45;   // WL-9 "demnaechst" window: next 45d (digital releases)
 const MAGAZINE_SEEN_DAYS = 35;       // dedup window vs previous issues
 const MAGAZINE_MIN_NEW_CANDIDATES = 5; // below this → fetch discover page 2
 const TMDB_CALL_CEILING = 40;        // runtime guard on TMDB calls per invocation
@@ -384,9 +385,10 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       note(`Neu after fallback: ${newScored.length}`);
     }
 
-    // ── Rubrik "Demnaechst": next MAGAZINE_LOOKAHEAD_DAYS ──
+    // ── Rubrik "Demnaechst" (WL-9): upcoming digital/TV releases next 45d ──
     const upRaw = await fetchMagazineWindow(
-      isoDate(addDays(today, 1)), isoDate(addDays(today, MAGAZINE_LOOKAHEAD_DAYS)), 1, 0, env,
+      isoDate(addDays(today, 1)), isoDate(addDays(today, MAGAZINE_UPCOMING_DAYS)), 1, 0, env,
+      { upcoming: true },
     );
     note(`Demnaechst raw candidates: ${upRaw.length} (tmdbCalls=${tmdbCalls})`);
     const newKeys = new Set(newScored.map((r) => r.key));
@@ -403,7 +405,9 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
     const upItems = await enrichMagazineItems(
       upScored, MAGAZINE_UPCOMING_COUNT, { requireProviders: false }, taste, tasteSample, env, note,
     );
-    upItems.sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
+    // Sort by the displayed badge date (DE digital date for WL-9 upcoming).
+    upItems.sort((a, b) =>
+      ((a.upcoming_date || a.release_date) || '').localeCompare((b.upcoming_date || b.release_date) || ''));
     note(`Enriched: neu=${neuItems.length} demnaechst=${upItems.length} (tmdbCalls=${tmdbCalls})`);
 
     // Honest subrequest accounting (WL-11): tmdb + kv are both measured, no
@@ -721,10 +725,10 @@ function itemKey(item) {
 // Discovery — release windows on Scholly's providers (DE)
 // ─────────────────────────────────────────────────────────────────────────
 
-async function fetchMagazineWindow(dateFrom, dateTo, page, voteCountGte, env) {
+async function fetchMagazineWindow(dateFrom, dateTo, page, voteCountGte, env, opts = {}) {
   const tasks = [];
   for (const mediaType of ['movie', 'tv']) {
-    tasks.push(fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env));
+    tasks.push(fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env, opts));
   }
   const pages = await Promise.all(tasks);
   const seen = new Map();
@@ -737,19 +741,41 @@ async function fetchMagazineWindow(dateFrom, dateTo, page, voteCountGte, env) {
   return Array.from(seen.values());
 }
 
-async function fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env) {
-  const dateGteKey = mediaType === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte';
-  const dateLteKey = mediaType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
-  const data = await tmdbGet(`discover/${mediaType}`, {
-    watch_region: 'DE',
-    with_watch_providers: PROVIDER_IDS_STR,
-    with_watch_monetization_types: 'flatrate|free|ads',
-    [dateGteKey]: dateFrom,
-    [dateLteKey]: dateTo,
+// opts.upcoming (WL-9): for the "Demnaechst" rubric, find titles with an
+// upcoming DIGITAL/TV release in the window — providers are not yet assigned
+// pre-release, so the provider filter is dropped and `with_release_type=4|6`
+// (Digital/TV) + `region=DE` is used instead. The "Neu" path (default opts)
+// keeps the provider-required primary_release_date discover unchanged.
+async function fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, env, opts = {}) {
+  const upcoming = !!opts.upcoming;
+  const params = {
     sort_by: 'popularity.desc',
     'vote_count.gte': voteCountGte,
     page,
-  }, env);
+  };
+  if (mediaType === 'movie') {
+    if (upcoming) {
+      params.region = 'DE';
+      params.with_release_type = '4|6';
+      params['release_date.gte'] = dateFrom;
+      params['release_date.lte'] = dateTo;
+    } else {
+      params.watch_region = 'DE';
+      params.with_watch_providers = PROVIDER_IDS_STR;
+      params.with_watch_monetization_types = 'flatrate|free|ads';
+      params['primary_release_date.gte'] = dateFrom;
+      params['primary_release_date.lte'] = dateTo;
+    }
+  } else {
+    params['first_air_date.gte'] = dateFrom;
+    params['first_air_date.lte'] = dateTo;
+    params.watch_region = 'DE';
+    if (!upcoming) {
+      params.with_watch_providers = PROVIDER_IDS_STR;
+      params.with_watch_monetization_types = 'flatrate|free|ads';
+    }
+  }
+  const data = await tmdbGet(`discover/${mediaType}`, params, env);
   if (!data || !Array.isArray(data.results)) return [];
   return data.results.map((r) => normalizeDiscoverItem(r, mediaType));
 }
@@ -914,6 +940,23 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
       certification = (withCert && withCert.certification) || null;
     }
 
+    // WL-9: the real DE digital/TV release date for the "Demnaechst" badge —
+    // the discover result's release_date is the (often past) primary release,
+    // so the upcoming badge must use the type=4 (Digital) / 6 (TV) date.
+    let upcoming_date = null;
+    if (c.type !== 'tv') {
+      const deRel = ((data.release_dates && data.release_dates.results) || [])
+        .find((r) => r.iso_3166_1 === 'DE');
+      if (deRel && Array.isArray(deRel.release_dates)) {
+        const today = isoDate(new Date());
+        upcoming_date = deRel.release_dates
+          .filter((x) => (x.type === 4 || x.type === 6) && x.release_date)
+          .map((x) => x.release_date.slice(0, 10))
+          .filter((d) => d >= today)
+          .sort()[0] || null;
+      }
+    }
+
     const kwRaw = c.type === 'tv'
       ? ((data.keywords && data.keywords.results) || [])
       : ((data.keywords && data.keywords.keywords) || []);
@@ -931,7 +974,8 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
       title: c.title,
       year: c.release_date ? c.release_date.slice(0, 4) : '',
       release_date: c.release_date,
-      is_upcoming: !!c.is_upcoming,
+      is_upcoming: !!c.is_upcoming || !!upcoming_date,
+      upcoming_date,
       rating: Math.round(c.vote_average * 10) / 10,
       vote_count: c.vote_count,
       taste_score: c.taste_score,
