@@ -112,6 +112,9 @@ async function init() {
   bindEvents();
   // Sync from server (non-blocking)
   await pullFromServer();
+  // WL: promote any "vorgemerkt" items whose release is now available (after
+  // the server pull, so a promote survives the items=remote replacement).
+  await resolveVorgemerkt();
   // Check for auto-add URL parameter (?add=tmdbId&type=movie)
   const autoAdd = getAutoAddParams();
   if (autoAdd.tmdbId && autoAdd.mediaType) {
@@ -175,7 +178,20 @@ async function handleAutoAdd(tmdbId, mediaType) {
     else if (providers.buy.length > 0) serviceId = providers.buy[0];
 
     if (!serviceId) {
-      showAutoAddToast(`„${getTitle(result)}" — kein Streaming-Dienst gefunden`, 'error');
+      // No provider yet (upcoming title) — bookmark as "vorgemerkt" instead of
+      // failing. It auto-promotes to a service once one becomes available.
+      const added = addVorgemerkt({
+        tmdbId,
+        title: getTitle(result),
+        year: (result.release_date || result.first_air_date || '').slice(0, 4),
+        type: mediaType,
+        poster: result.poster_path,
+        backdrop: result.backdrop_path,
+        overview: result.overview,
+        rating: result.vote_average,
+        releaseDate: result.release_date || result.first_air_date || null,
+      });
+      showAutoAddToast(`„${getTitle(result)}" ${added ? 'vorgemerkt' : 'ist bereits auf deiner Watchlist'}`, added ? 'success' : 'info');
       cleanAutoAddParams();
       return;
     }
@@ -652,7 +668,9 @@ function getTypeTag(item) {
 
 // ---- Render: Filter Bar ----
 function renderFilterBar() {
-  const usedServices = [...new Set(items.map(i => i.serviceId))];
+  // .filter(Boolean) drops the null serviceId of vorgemerkt items — they get
+  // their own chip below, not a broken service chip.
+  const usedServices = [...new Set(items.map(i => i.serviceId))].filter(Boolean);
   const existingServiceChips = $filterBar.querySelectorAll('.service-chip');
   existingServiceChips.forEach(c => c.remove());
 
@@ -667,6 +685,17 @@ function renderFilterBar() {
     if (activeService === svc.id) chip.classList.add('active');
     $filterBar.appendChild(chip);
   });
+
+  // "Vorgemerkt" chip for service-less (upcoming) items
+  if (items.some(i => i.serviceId == null)) {
+    const chip = document.createElement('button');
+    chip.className = 'filter-chip service-chip chip-vorgemerkt';
+    chip.dataset.service = '__vorgemerkt__';
+    chip.style.setProperty('--chip-color', 'var(--tertiary)');
+    chip.textContent = 'Vorgemerkt';
+    if (activeService === '__vorgemerkt__') chip.classList.add('active');
+    $filterBar.appendChild(chip);
+  }
 }
 
 // ---- Render: Watchlist ----
@@ -681,7 +710,9 @@ function renderWatchlist() {
     filtered = filtered.filter(i => i.type === 'tv');
   }
 
-  if (activeService) {
+  if (activeService === '__vorgemerkt__') {
+    filtered = filtered.filter(i => i.serviceId == null);
+  } else if (activeService) {
     filtered = filtered.filter(i => i.serviceId === activeService);
   }
 
@@ -736,7 +767,9 @@ function createCard(item) {
         <span class="card-type">${item.type === 'tv' ? 'Serie' : 'Film'}</span>
       </div>
     </div>
-    ${svc ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
+    ${svc
+      ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>`
+      : (item.serviceId == null ? `<div class="card-badge-vorgemerkt">${vorgemerktBadgeText(item)}</div>` : '')}
   `;
 
   card.addEventListener('click', () => openDetail(item));
@@ -917,7 +950,7 @@ let detailRequestId = 0; // race condition guard
 
 async function openDetail(item) {
   const requestId = ++detailRequestId;
-  const svc = SERVICES.find(s => s.id === item.serviceId);
+  let svc = SERVICES.find(s => s.id === item.serviceId);
   const $backdrop = document.getElementById('detailBackdrop');
   const $content = document.getElementById('detailContent');
 
@@ -1017,13 +1050,32 @@ async function openDetail(item) {
   // Race condition guard: only update if this is still the active detail view
   if (requestId !== detailRequestId) return;
 
-  // Only save if providers actually changed
-  const oldProviders = JSON.stringify(item.providers || {});
-  const newProviders = JSON.stringify(providers);
-  if (oldProviders !== newProviders) {
-    item.providers = providers;
-    item.updatedAt = Date.now();
+  // A vorgemerkt item may now have a provider — promote it. Re-bind svc and
+  // re-render the header badge (which was absent while service-less).
+  if (tryPromote(item, providers)) {
+    svc = SERVICES.find(s => s.id === item.serviceId);
     saveItems();
+    let $hb = $content.querySelector('.detail-service-badge');
+    if (!$hb && svc) {
+      $hb = document.createElement('div');
+      $hb.className = 'detail-service-badge';
+      $content.insertBefore($hb, $content.firstChild);
+    }
+    if ($hb && svc) {
+      $hb.style.background = svc.color;
+      $hb.textContent = svc.name;
+    }
+    renderFilterBar();
+    renderWatchlist();
+  } else {
+    // Only save if providers actually changed
+    const oldProviders = JSON.stringify(item.providers || {});
+    const newProviders = JSON.stringify(providers);
+    if (oldProviders !== newProviders) {
+      item.providers = providers;
+      item.updatedAt = Date.now();
+      saveItems();
+    }
   }
 
   // Render provider badges
@@ -1430,6 +1482,83 @@ function updateFab(idx) {
     : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist');
 }
 
+// ---- Vorgemerkt (service-less / upcoming watchlist items) ----
+
+// Bookmark a title that has no streaming service yet (serviceId stays null).
+// Returns false if it's already on the watchlist.
+function addVorgemerkt(data) {
+  if (items.some(x => x.tmdbId === data.tmdbId && x.type === data.type)) return false;
+  items.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+    tmdbId: data.tmdbId,
+    title: data.title,
+    year: data.year || '',
+    type: data.type,
+    poster: data.poster || null,
+    backdrop: data.backdrop || null,
+    overview: data.overview || '',
+    rating: data.rating || null,
+    serviceId: null,              // null serviceId === "vorgemerkt"
+    releaseDate: data.releaseDate || null,
+    lastPromoteCheck: null,
+    watched: false,
+    addedAt: Date.now(),
+    updatedAt: Date.now(),
+    providers: { flat: [], rent: [], buy: [] },
+  });
+  saveItems();
+  renderFilterBar();
+  renderWatchlist();
+  return true;
+}
+
+// If a vorgemerkt item now has a provider, assign it (promote to a normal,
+// service-organised item). Mutates the item; caller persists + re-renders.
+function tryPromote(item, providers) {
+  if (item.serviceId != null) return false;
+  const sid = providers.flat[0] || providers.rent[0] || providers.buy[0] || null;
+  if (!sid) return false;
+  item.serviceId = sid;
+  item.providers = providers;
+  item.updatedAt = Date.now();
+  return true;
+}
+
+// Card badge label for a vorgemerkt item: future release date, else neutral.
+function vorgemerktBadgeText(item) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (item.releaseDate && item.releaseDate > today) {
+    return `ab ${esc(formatShortDate(item.releaseDate))}`;
+  }
+  return 'Vorgemerkt';
+}
+
+// On load: re-check providers for vorgemerkt items whose release date has
+// passed, throttled to once per 24h per item (so a cinema-only title that
+// never streams doesn't re-fetch on every load — fetchProviders swallows
+// errors to {} so a failure is indistinguishable from "no provider yet").
+async function resolveVorgemerkt() {
+  const today = new Date().toISOString().slice(0, 10);
+  const now = Date.now();
+  const due = items.filter(i =>
+    i.serviceId == null && i.releaseDate && i.releaseDate <= today &&
+    (!i.lastPromoteCheck || now - i.lastPromoteCheck > 86400000));
+  if (due.length === 0) return;
+  let promoted = 0;
+  for (const item of due) {
+    item.lastPromoteCheck = Date.now();
+    try {
+      const providers = await fetchProviders(item.tmdbId, item.type);
+      if (tryPromote(item, providers)) {
+        promoted++;
+        showAutoAddToast(`„${item.title}" ist jetzt verfügbar`, 'info');
+      }
+    } catch (e) { /* throttle still applied via lastPromoteCheck */ }
+  }
+  if (promoted > 0) { saveItems(); renderFilterBar(); renderWatchlist(); }
+  else { saveItems(); }  // persist lastPromoteCheck
+}
+
 // Returns true if the title is on the watchlist afterwards. Decoupled from any
 // DOM button so the single floating button can drive it (P1-2).
 async function addFromMagazine(it) {
@@ -1460,9 +1589,21 @@ async function addFromMagazine(it) {
     showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
     return true;
   }
-  // No provider known yet (e.g. far-out upcoming) — full lookup path
-  await handleAutoAdd(it.tmdb_id, it.type);
-  return items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
+  // No provider yet (upcoming title) — bookmark as "vorgemerkt" directly from
+  // the magazine data (no TMDB roundtrip; title/poster/date are in the JSON).
+  const added = addVorgemerkt({
+    tmdbId: it.tmdb_id,
+    title: it.title,
+    year: it.year || '',
+    type: it.type,
+    poster: it.poster_path,
+    backdrop: it.backdrop_path,
+    overview: it.overview,
+    rating: it.rating,
+    releaseDate: it.upcoming_date || it.release_date || null,
+  });
+  if (added) showAutoAddToast(`✓ „${it.title}" vorgemerkt`, 'success');
+  return true;
 }
 
 const $magClose = document.getElementById('magazineClose');
