@@ -1218,15 +1218,17 @@ body {
   margin: 0 0 13px;
 }
 .mag-teaser-thumbs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
 .mag-teaser-thumb {
-  width: 60px;
-  height: 88px;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  height: auto;
   object-fit: cover;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface-4);
 }
 .mag-teaser-btn {
