@@ -10,12 +10,16 @@ compatibility_flags = ["nodejs_compat"]
 binding = "WATCHLIST_KV"
 id = "d21a31cf2f614d05a1d5767954abc5c6"
 
-# Weekly magazine build — Friday 16:00 UTC = 18:00 MESZ (Wochenend-Start)
-# Weekly taste-profile rebuild — Sunday 03:00 UTC (off-peak, refreshes KV cache)
-# WL-5 (2026-06-11): weekly magazine replaces the daily recommendation cron.
-# Two-cron split keeps each invocation under the Workers Free 50-subrequest cap.
+# WL-11 (2026-06-14): per-member magazines via stateless daily round-robin.
+#   "0 16 * * *" daily magazine build — 16:00 UTC = 18:00 MESZ — for that day's
+#                roster member (idx = floor(scheduledTime/86400000) % len).
+#   "0 3  * * *" daily taste pre-warm — 03:00 UTC — same member as the 16:00 run
+#                that day, so the magazine build finds a warm taste cache.
+#   One member per invocation keeps each run under the Free 50-subrequest cap;
+#   2 cron triggers (account limit is 5). Roster lives in KV
+#   config:magazine_members (owner always included). Was WL-5: weekly FRI/SUN.
 [triggers]
-crons = ["0 16 * * FRI", "0 3 * * SUN"]
+crons = ["0 16 * * *", "0 3 * * *"]
 
 # Observability — make `wrangler tail` show structured logs.
 [observability]
