@@ -618,6 +618,21 @@ function tmdbBackdrop(path) {
   return path ? `${TMDB_IMG}/w780${path}` : null;
 }
 
+function tmdbProfile(path, size = 'w185') {
+  return path ? `${TMDB_IMG}/${size}${path}` : null;
+}
+
+const LANG_MAP = {
+  en: 'Englisch', de: 'Deutsch', sv: 'Schwedisch', fr: 'Französisch',
+  es: 'Spanisch', it: 'Italienisch', ja: 'Japanisch', ko: 'Koreanisch',
+  da: 'Dänisch', no: 'Norwegisch', nl: 'Niederländisch', pt: 'Portugiesisch',
+};
+
+function initials(name) {
+  return (name || '').split(/\s+/).filter(Boolean).slice(0, 2)
+    .map((w) => w[0]).join('').toUpperCase() || '?';
+}
+
 function getTitle(item) {
   return item.title || item.name || 'Unbekannt';
 }
@@ -1240,46 +1255,99 @@ function genreBadgeColor(name) {
   return '#2d3449';
 }
 
+// Magazin v2 — Variante B (Fokus-Kino): grosses Poster-Hero mit Titel-Overlay,
+// Trailer-Play, Tagline-Zitat, Fakten-Panel, Besetzung mit Fotos, Mood-Tags,
+// Empfehlungen. Jedes neue Feld null-guarded (fehlt -> Block entfaellt).
 function magazineCardHtml(it, i) {
-  const backdrop = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
+  // Backdrop first: backdrops have no baked-in title text, so the title
+  // overlay stays clean (posters often print the title onto the artwork).
+  const hero = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
   const genre = (it.genres && it.genres[0]) || (it.type === 'tv' ? 'Serie' : 'Film');
   const onList = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
 
-  const metaParts = [];
-  if (it.year) metaParts.push(it.year);
-  if (it.country) metaParts.push(it.country);
-  if (it.type === 'tv' && it.seasons) {
-    metaParts.push(it.seasons > 1 ? `Staffel ${it.seasons}` : `${it.episodes || '?'} Folgen`);
-  } else if (it.runtime) {
-    metaParts.push(`${it.runtime} Min.`);
-  }
-  if (it.rating) metaParts.push(`★ ${it.rating}`);
-  const providers = (it.providers || []).join(' · ');
+  const heroTags = [esc(genre.toUpperCase())];
+  if (it.certification) heroTags.push(`FSK ${esc(it.certification)}`);
+
+  const typeLabel = it.type === 'tv'
+    ? (it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : 'Serie')
+    : 'Film';
+  const heroSub = [typeLabel, (it.providers || [])[0]].filter(Boolean).join(' · ');
+
+  const trailerBtn = it.trailer_key ? `
+      <a class="mag-hero-play" href="https://www.youtube.com/watch?v=${encodeURIComponent(it.trailer_key)}" target="_blank" rel="noopener noreferrer" aria-label="Trailer auf YouTube ansehen">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+      </a>` : '';
 
   const upBadge = it.is_upcoming && it.release_date
     ? `<span class="mag-card-up">ab ${formatShortDate(it.release_date)}</span>` : '';
-  const fanOf = it.fan_of ? `
-      <div class="mag-card-box mag-card-fanof">
-        <span class="mag-box-label">Für Fans von</span>
-        <span class="mag-box-text">${esc(it.fan_of)}</span>
+
+  const tagline = it.tagline ? `<p class="mag-tagline">„${esc(it.tagline)}"</p>` : '';
+
+  const lang = it.original_language
+    ? (LANG_MAP[it.original_language] || it.original_language.toUpperCase()) : null;
+  const facts = [];
+  if (it.rating) facts.push({ big: `★ ${it.rating}`, small: 'TMDB-Wertung', accent: true });
+  if (it.type === 'tv' && (it.episodes || it.seasons)) {
+    facts.push({ big: it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : `${it.episodes || '?'} Folgen`, small: 'Umfang' });
+  } else if (it.runtime) {
+    facts.push({ big: `${it.runtime} Min.`, small: 'Laufzeit' });
+  }
+  if (it.certification) facts.push({ big: `FSK ${esc(it.certification)}`, small: lang ? esc(lang) : 'Altersfreigabe' });
+  else if (lang) facts.push({ big: esc(lang), small: 'Sprache' });
+  else if (it.year) facts.push({ big: esc(String(it.year)), small: 'Jahr' });
+  if (it.director) facts.push({ big: esc(it.director), small: 'Regie' });
+  else if (it.country) facts.push({ big: esc(it.country), small: 'Land' });
+  const factsHtml = facts.length ? `
+      <div class="mag-facts">${facts.slice(0, 4).map(f =>
+        `<div class="mag-fact${f.accent ? ' mag-fact-accent' : ''}"><span class="mag-fact-big">${f.big}</span><span class="mag-fact-small">${f.small}</span></div>`).join('')}</div>` : '';
+
+  const castHtml = (it.cast && it.cast.length) ? `
+      <div class="mag-cast">${it.cast.slice(0, 4).map(m => {
+        const photo = tmdbProfile(m.profile_path);
+        const inner = photo
+          ? `<img src="${esc(photo)}" alt="" loading="lazy">`
+          : `<span class="mag-cast-ini">${esc(initials(m.name))}</span>`;
+        return `<div class="mag-cast-m"><div class="mag-cast-av">${inner}</div><span class="mag-cast-name">${esc(m.name)}</span></div>`;
+      }).join('')}</div>` : '';
+
+  const overview = it.overview ? `<p class="mag-card-overview">${esc(it.overview)}</p>` : '';
+
+  const fanOfInline = it.fan_of ? ` <span class="mag-why-fan">Für Fans von ${esc(it.fan_of)}.</span>` : '';
+  const reason = it.reason ? `
+      <div class="mag-why"><span class="mag-box-label mag-why-label">Warum für dich</span><span class="mag-box-text">${esc(it.reason)}${fanOfInline}</span></div>` : '';
+
+  const tags = (it.keywords && it.keywords.length) ? `
+      <div class="mag-tags">${it.keywords.slice(0, 4).map(k => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>` : '';
+
+  const recs = (it.recommendations && it.recommendations.length) ? `
+      <div class="mag-recs">
+        <span class="mag-box-label mag-recs-label">Wenn dir gefällt</span>
+        <div class="mag-recs-row">${it.recommendations.slice(0, 2).map(r => {
+          const poster = tmdbPoster(r.poster_path, 'w185');
+          return `<div class="mag-rec">${poster ? `<img src="${esc(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span>${esc(r.title)}</span></div>`;
+        }).join('')}</div>
       </div>` : '';
 
   return `
-  <article class="mag-card">
-    <div class="mag-card-hero">
-      ${backdrop ? `<img src="${esc(backdrop)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
-      <span class="mag-card-genre" style="background:${genreBadgeColor(genre)}">${esc(genre.toUpperCase())}</span>
+  <article class="mag-card mag-card-v2">
+    <div class="mag-hero">
+      ${hero ? `<img src="${esc(hero)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
+      <span class="mag-hero-tags">${heroTags.join(' · ')}</span>
       ${upBadge}
+      ${trailerBtn}
+      <div class="mag-hero-scrim">
+        <h3 class="mag-hero-title">${esc(it.title)}</h3>
+        ${heroSub ? `<span class="mag-hero-sub">${esc(heroSub)}</span>` : ''}
+      </div>
     </div>
     <div class="mag-card-body">
-      <h3 class="mag-card-title">${esc(it.title)}</h3>
-      <p class="mag-card-meta">${esc(metaParts.join(' · '))}${providers ? ` · ${esc(providers)}` : ''}</p>
-      ${it.overview ? `<p class="mag-card-overview">${esc(it.overview)}</p>` : ''}
-      <div class="mag-card-box mag-card-reason">
-        <span class="mag-box-label">Warum für dich</span>
-        <span class="mag-box-text">${esc(it.reason || '')}</span>
-      </div>
-      ${fanOf}
+      ${tagline}
+      ${factsHtml}
+      ${castHtml}
+      ${overview}
+      ${reason}
+      ${tags}
+      ${recs}
       <button class="mag-add-btn${onList ? ' added' : ''}" data-idx="${i}" ${onList ? 'disabled' : ''}>
         ${onList ? '✓ Auf deiner Liste' : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist')}
       </button>

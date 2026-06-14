@@ -412,7 +412,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
     // live return re-reads the counters after those writes. The cron path adds
     // one more KV read (the roster) outside this function.
     if (neuItems.length === 0 && upItems.length === 0) {
-      const msg = 'Magazin diese Woche uebersprungen — keine passenden Neuerscheinungen gefunden.';
+      const msg = 'Magazin diese Woche übersprungen — keine passenden Neuerscheinungen gefunden.';
       note(msg);
       if (!dryRun) await postTelegram(`⚠️ ${msg}`, env);
       return {
@@ -424,7 +424,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
 
     const issueWeek = isoWeek(today);
     const magazine = {
-      version: 1,
+      version: 2,
       issue: {
         week: issueWeek,
         year: today.getFullYear(),
@@ -433,8 +433,8 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       },
       counts: { neu: neuItems.length, demnaechst: upItems.length },
       sections: [
-        { id: 'neu', title: 'Neu fuer dich', items: neuItems },
-        { id: 'demnaechst', title: 'Demnaechst', items: upItems },
+        { id: 'neu', title: 'Neu für dich', items: neuItems },
+        { id: 'demnaechst', title: 'Demnächst', items: upItems },
       ],
     };
 
@@ -842,9 +842,15 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
     }
 
     detailCalls++;
+    // Magazin v2: one combined call still = ONE subrequest (append bundles up
+    // to 20 sub-objects server-side). include_video_language widens the videos
+    // filter so trailers come through despite language=de-DE on the parent.
     const data = await tmdbGet(
       `${c.type}/${c.tmdb_id}`,
-      { append_to_response: 'credits,watch/providers' },
+      {
+        append_to_response: 'credits,watch/providers,videos,release_dates,content_ratings,keywords,recommendations',
+        include_video_language: 'de,en',
+      },
       env,
     );
     if (!data) continue;
@@ -865,8 +871,9 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
     if (requireProviders && providerNames.size === 0) continue;
 
     const castList = ((data.credits && data.credits.cast) || []).slice(0, 5);
-    const castIds = castList.map((m) => m.id).filter(Boolean);
-    const castNames = castList.slice(0, 3).map((m) => m.name).filter(Boolean);
+    const cast = castList
+      .map((m) => ({ name: m.name, profile_path: m.profile_path || null }))
+      .filter((m) => m.name);
 
     const genreNames = (data.genres || [])
       .map((g) => g.name || GENRE_MAP[g.id])
@@ -876,6 +883,46 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
     const country = c.type === 'tv'
       ? ((data.origin_country && data.origin_country[0]) || null)
       : ((data.production_countries && data.production_countries[0] && data.production_countries[0].iso_3166_1) || null);
+
+    // ── Magazin v2 enrichment — all extracted from the same combined call ──
+    const vids = (data.videos && data.videos.results) || [];
+    const ytTrailers = vids.filter((v) => v.type === 'Trailer' && v.site === 'YouTube');
+    // official first, then German before English
+    ytTrailers.sort((a, b) => {
+      if (!!b.official !== !!a.official) return (b.official ? 1 : 0) - (a.official ? 1 : 0);
+      return (a.iso_639_1 === 'de' ? 0 : 1) - (b.iso_639_1 === 'de' ? 0 : 1);
+    });
+    const trailer_key = ytTrailers.length ? ytTrailers[0].key : null;
+
+    const director = c.type === 'tv'
+      ? ((data.created_by && data.created_by[0] && data.created_by[0].name) || null)
+      : (((data.credits && data.credits.crew) || []).find((p) => p.job === 'Director') || {}).name || null;
+
+    const tagline = data.tagline || null;
+
+    let certification = null;
+    if (c.type === 'tv') {
+      const deRating = ((data.content_ratings && data.content_ratings.results) || [])
+        .find((r) => r.iso_3166_1 === 'DE');
+      certification = (deRating && deRating.rating) || null;
+    } else {
+      const deRel = ((data.release_dates && data.release_dates.results) || [])
+        .find((r) => r.iso_3166_1 === 'DE');
+      const withCert = deRel && Array.isArray(deRel.release_dates)
+        ? deRel.release_dates.find((x) => x.certification)
+        : null;
+      certification = (withCert && withCert.certification) || null;
+    }
+
+    const kwRaw = c.type === 'tv'
+      ? ((data.keywords && data.keywords.results) || [])
+      : ((data.keywords && data.keywords.keywords) || []);
+    const keywords = kwRaw.slice(0, 4).map((k) => k.name).filter(Boolean);
+
+    const recommendations = ((data.recommendations && data.recommendations.results) || [])
+      .slice(0, 2)
+      .map((r) => ({ id: r.id, title: r.title || r.name || '', poster_path: r.poster_path || null }))
+      .filter((r) => r.title);
 
     out.push({
       key: c.key,
@@ -892,7 +939,14 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
       genre_ids: c.genre_ids,
       providers: Array.from(providerNames).sort(),
       providers_app: Array.from(providerAppIds),
-      cast: castNames,
+      cast,
+      director,
+      tagline,
+      certification,
+      keywords,
+      recommendations,
+      trailer_key,
+      original_language: c.original_language || null,
       country,
       runtime: c.type === 'movie' ? (data.runtime || null) : null,
       seasons: c.type === 'tv' ? (data.number_of_seasons || null) : null,
