@@ -1410,6 +1410,216 @@ body.mag-open { overflow: hidden; }
   cursor: default;
 }
 
+/* ---- Magazin v2 — Variante B (Fokus-Kino) ---- */
+.mag-card-v2 .mag-card-body {
+  gap: 14px;
+}
+.mag-hero {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: var(--surface-2);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.mag-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mag-hero-tags {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(6, 14, 32, 0.55);
+  padding: 4px 11px;
+  border-radius: var(--radius-pill);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.mag-hero-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--surface-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 3px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+.mag-hero-play:active {
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.mag-hero-scrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 32px 16px 14px;
+  background: linear-gradient(to top, rgba(6, 14, 32, 0.94), rgba(6, 14, 32, 0));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mag-hero-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 26px;
+  line-height: 1.08;
+  color: #fff;
+  margin: 0;
+}
+.mag-hero-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.mag-tagline {
+  font-family: 'Outfit', sans-serif;
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.4;
+  color: var(--text);
+  text-align: center;
+  margin: 2px 0;
+}
+.mag-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+.mag-fact {
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 10px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mag-fact-big {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mag-fact-small {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.mag-fact-accent .mag-fact-big {
+  color: var(--tertiary);
+}
+.mag-cast {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+.mag-cast-m {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 23%;
+}
+.mag-cast-av {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mag-cast-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mag-cast-ini {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.mag-cast-name {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.2;
+}
+.mag-why {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mag-why-label {
+  color: var(--primary);
+}
+.mag-why-fan {
+  color: var(--text-dim);
+}
+.mag-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.mag-tag {
+  font-size: 11.5px;
+  color: var(--primary-light);
+  border: 1px solid rgba(173, 198, 255, 0.22);
+  padding: 4px 11px;
+  border-radius: var(--radius-pill);
+}
+.mag-recs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mag-recs-label {
+  color: var(--tertiary);
+}
+.mag-recs-row {
+  display: flex;
+  gap: 10px;
+}
+.mag-rec {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 7px;
+}
+.mag-rec img,
+.mag-rec-ph {
+  width: 34px;
+  height: 48px;
+  border-radius: 5px;
+  flex: none;
+  object-fit: cover;
+  background: var(--surface-4);
+}
+.mag-rec span {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
 /* ---- Tablet/Desktop ---- */
 @media (min-width: 768px) {
   .mag-card-hero {
