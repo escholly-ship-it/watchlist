@@ -1204,7 +1204,9 @@ function renderMagazineTeaser() {
   const all = magazineItems();
   if (all.length === 0) { $teaser.classList.add('hidden'); return; }
 
-  const thumbs = all.slice(0, 3)
+  // Show all the issue's posters in a wrapping grid so the teaser fills out
+  // like a small magazine cover (was just the first 3).
+  const thumbs = all.slice(0, 12)
     .map(it => {
       const url = tmdbPoster(it.poster_path, 'w185');
       return url ? `<img class="mag-teaser-thumb" src="${esc(url)}" alt="" loading="lazy">` : '';
