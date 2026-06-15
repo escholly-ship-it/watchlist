@@ -75,6 +75,16 @@ function esc(str) {
   return d.innerHTML;
 }
 
+// ---- A11y: WCAG-konforme Text-Farbe (dunkel/hell) fuer solide Badges ----
+function badgeTextColor(hex){
+  const c=(hex||'').replace('#','');
+  const f=c.length===3?c.split('').map(x=>x+x).join(''):c;
+  if(f.length<6) return '#fff';
+  const lin=v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);};
+  const L=0.2126*lin(parseInt(f.substr(0,2),16))+0.7152*lin(parseInt(f.substr(2,2),16))+0.0722*lin(parseInt(f.substr(4,2),16));
+  return L>0.18?'#0b1326':'#fff';
+}
+
 // ---- State ----
 let items = [];
 let activeFilter = 'all';
@@ -102,6 +112,44 @@ const $serviceSelect = document.getElementById('serviceSelect');
 const $selectedTitle = document.getElementById('selectedTitle');
 const $serviceGrid = document.getElementById('serviceGrid');
 const $btnSave = document.getElementById('btnSave');
+
+// ---- A11y: Overlay-Fokus-Management (Focus-Trap + inert + Fokus-Restore) ----
+let lastFocused = null;
+const _trapHandlers = new WeakMap(); // overlayEl -> keydown handler (for clean removal)
+
+// Overlay oeffnen: Hintergrund inert, Trap-Listener registrieren, Fokus setzen.
+function openOverlay(overlayEl, focusTarget){
+  lastFocused = document.activeElement;
+  setBackgroundInert(true);
+  const handler = (e) => trapTab(e, overlayEl);
+  _trapHandlers.set(overlayEl, handler);
+  overlayEl.addEventListener('keydown', handler);
+  if(focusTarget) setTimeout(() => { try { focusTarget(); } catch(_){} }, 0);
+}
+
+// Overlay schliessen: inert weg, Trap-Listener entfernen, Fokus zuruecksetzen.
+function closeOverlay(overlayEl){
+  setBackgroundInert(false);
+  const handler = _trapHandlers.get(overlayEl);
+  if(handler){ overlayEl.removeEventListener('keydown', handler); _trapHandlers.delete(overlayEl); }
+  if(lastFocused && typeof lastFocused.focus === 'function'){ lastFocused.focus(); lastFocused = null; }
+}
+
+function setBackgroundInert(on){
+  document.querySelectorAll('#app > header, #app > #filterBar, #app > #magazineTeaser, #app > #shortlistSection, #app > #watchlist').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
+}
+
+function focusables(root){
+  return [...root.querySelectorAll('a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(el => el.offsetParent !== null || el === document.activeElement);
+}
+
+function trapTab(e, root){
+  if(e.key !== 'Tab') return;
+  const f = focusables(root); if(!f.length) return;
+  const first = f[0], last = f[f.length-1];
+  if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+}
 
 // ---- Init ----
 async function init() {
@@ -410,7 +458,7 @@ function renderShortlist() {
         ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${esc(item.title)}" loading="lazy">`
         : `<div class="shortlist-no-poster">🎬</div>`
       }
-      ${svc ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
+      ${svc ? `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>` : ''}
       <button class="shortlist-remove" aria-label="Entfernen">×</button>
       <div class="shortlist-overlay">
         <div class="shortlist-card-title">${esc(item.title)}</div>
@@ -681,6 +729,7 @@ function renderFilterBar() {
     chip.className = 'filter-chip service-chip';
     chip.dataset.service = svc.id;
     chip.style.setProperty('--chip-color', svc.color);
+    chip.style.setProperty('--chip-text', badgeTextColor(svc.color));
     chip.textContent = svc.name;
     if (activeService === svc.id) chip.classList.add('active');
     $filterBar.appendChild(chip);
@@ -692,6 +741,7 @@ function renderFilterBar() {
     chip.className = 'filter-chip service-chip chip-vorgemerkt';
     chip.dataset.service = '__vorgemerkt__';
     chip.style.setProperty('--chip-color', 'var(--tertiary)');
+    chip.style.setProperty('--chip-text', badgeTextColor('#ffb786'));
     chip.textContent = 'Vorgemerkt';
     if (activeService === '__vorgemerkt__') chip.classList.add('active');
     $filterBar.appendChild(chip);
@@ -752,6 +802,9 @@ function createCard(item) {
   const card = document.createElement('div');
   card.className = 'card' + (item.watched ? ' watched' : '');
   card.dataset.id = item.id;
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `${esc(item.title)} öffnen`);
 
   const svc = SERVICES.find(s => s.id === item.serviceId);
 
@@ -768,11 +821,14 @@ function createCard(item) {
       </div>
     </div>
     ${svc
-      ? `<div class="service-badge" style="background:${svc.color}">${esc(svc.name)}</div>`
+      ? `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>`
       : (item.serviceId == null ? `<div class="card-badge-vorgemerkt">${vorgemerktBadgeText(item)}</div>` : '')}
   `;
 
   card.addEventListener('click', () => openDetail(item));
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(item); }
+  });
   return card;
 }
 
@@ -978,8 +1034,8 @@ async function openDetail(item) {
   $closeBtn.onclick = closeDetailModal;
 
   $content.innerHTML = `
-    ${svc ? `<div class="detail-service-badge" style="background:${svc.color}">${esc(svc.name)}</div>` : ''}
-    <h2 class="detail-title">${esc(item.title)}</h2>
+    ${svc ? `<div class="detail-service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>` : ''}
+    <h2 class="detail-title" id="detailModalTitle">${esc(item.title)}</h2>
     <div class="detail-meta">
       ${ratingPct ? `<span class="detail-match">${ratingPct}% Match</span>` : ''}
       <span>${esc(item.year)}</span>
@@ -995,7 +1051,7 @@ async function openDetail(item) {
       <button class="btn-watched" data-id="${item.id}">
         ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
       </button>
-      <a class="btn-stream" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener">▶︎</a>
+      <a class="btn-stream" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener" aria-label="Auf TMDB ansehen">▶︎</a>
       <button class="btn-remove" data-id="${item.id}">Entfernen</button>
     </div>
   `;
@@ -1040,6 +1096,7 @@ async function openDetail(item) {
   });
 
   $detailModal.classList.add('open');
+  openOverlay($detailModal, () => $closeBtn.focus());
 
   // Fetch fresh providers in background
   const $providers = document.getElementById('detailProviders');
@@ -1063,6 +1120,7 @@ async function openDetail(item) {
     }
     if ($hb && svc) {
       $hb.style.background = svc.color;
+      $hb.style.color = badgeTextColor(svc.color);
       $hb.textContent = svc.name;
     }
     renderFilterBar();
@@ -1087,7 +1145,10 @@ async function openDetail(item) {
       const s = SERVICES.find(x => x.id === svcId);
       if (s) {
         const isCurrent = svcId === item.serviceId;
-        providerHtml += `<div class="detail-provider-badge" style="background:${s.color}${isCurrent ? '' : ';opacity:0.7'}">${esc(s.name)}</div>`;
+        // isCurrent: solides Badge -> WCAG-1.4.3-konforme Textfarbe mitgeben.
+        // Nicht-current: opacity:0.7 = bewusst inaktiver Zustand (WCAG-1.4.3-Ausnahme), Optik unveraendert.
+        const provColor = isCurrent ? `;color:${badgeTextColor(s.color)}` : ';opacity:0.7';
+        providerHtml += `<div class="detail-provider-badge" style="background:${s.color}${provColor}">${esc(s.name)}</div>`;
       }
     });
     providerHtml += '</div>';
@@ -1106,17 +1167,20 @@ async function openDetail(item) {
 
 function closeDetailModal() {
   $detailModal.classList.remove('open');
+  closeOverlay($detailModal);
 }
 
 // ---- Add Modal ----
 function openAddModal() {
   resetAddModal();
   $addModal.classList.add('open');
+  openOverlay($addModal, null);
   setTimeout(() => $searchInput.focus(), 300);
 }
 
 function closeAddModal() {
   $addModal.classList.remove('open');
+  closeOverlay($addModal);
   resetAddModal();
 }
 
@@ -1412,6 +1476,7 @@ function openMagazineReader() {
   $track.innerHTML = all.map((it, i) => magazineCardHtml(it, i)).join('');
   $reader.classList.remove('hidden');
   document.body.classList.add('mag-open');
+  openOverlay($reader, () => { const c = document.getElementById('magazineClose'); if(c) c.focus(); });
   $track.scrollTop = 0;
   updateMagazineProgress(0, all.length);
 
@@ -1448,6 +1513,7 @@ function closeMagazineReader() {
   if (!$reader || $reader.classList.contains('hidden')) return;
   $reader.classList.add('hidden');
   document.body.classList.remove('mag-open');
+  closeOverlay($reader);
   if (magObserver) { magObserver.disconnect(); magObserver = null; }
 }
 
