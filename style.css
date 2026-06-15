@@ -47,6 +47,11 @@
   --space-5: 24px;
   --space-6: 32px;
 
+  /* Layout-Container (V2 Desktop-Layout-System) */
+  --content-max: 1440px;
+  --content-pad: max(var(--margin-outer), calc((100% - var(--content-max)) / 2));
+  --header-h: calc(var(--safe-top) + 66px);
+
   /* Ghost borders */
   --ghost: rgba(66, 71, 84, 0.2);
 
@@ -101,7 +106,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(var(--safe-top) + 14px) var(--margin-outer) 10px;
+  padding-block: calc(var(--safe-top) + 14px) 10px;
+  padding-inline: var(--content-pad);
   background: rgba(23, 31, 51, 0.8);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -186,7 +192,12 @@ body {
 .filter-bar {
   display: flex;
   gap: var(--space-2);
-  padding: 8px var(--margin-outer) 16px;
+  padding-block: 8px 16px;
+  padding-inline: var(--content-pad);
+  position: sticky;
+  top: var(--header-h);
+  z-index: 90;
+  background: var(--surface-1);
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -266,6 +277,8 @@ body {
 /* ---- Shortlist Section ---- */
 .shortlist-section {
   padding: 4px 0 12px;
+  padding-left: var(--content-pad);
+  padding-right: 0;
 }
 
 .shortlist-title {
@@ -275,7 +288,6 @@ body {
   margin-bottom: 10px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding-left: var(--margin-outer);
 }
 
 .shortlist-track {
@@ -285,7 +297,6 @@ body {
   scrollbar-width: none;
   -ms-overflow-style: none;
   padding-bottom: var(--space-1);
-  padding-left: var(--margin-outer);
   /* Bleed: kein rechtes Padding — Poster bluten über den Rand */
 }
 
@@ -451,7 +462,8 @@ body {
   .watchlist {
     grid-template-columns: repeat(5, 1fr);
     gap: var(--space-2);
-    padding: 0 16px 20px;
+    padding-block: 0 20px;
+    padding-inline: var(--content-pad);
   }
 }
 
@@ -459,7 +471,8 @@ body {
   .watchlist {
     grid-template-columns: repeat(6, 1fr);
     gap: 10px;
-    padding: 0 24px 24px;
+    padding-block: 0 24px;
+    padding-inline: var(--content-pad);
   }
 }
 
@@ -958,6 +971,7 @@ body {
 /* ---- Detail Modal ---- */
 .detail-modal {
   position: relative;
+  max-width: 600px;
 }
 
 .detail-backdrop {
@@ -1199,7 +1213,7 @@ body {
 
 /* ---- Teaser-Karte ---- */
 .magazine-teaser {
-  padding: 0 var(--margin-outer);
+  padding-inline: var(--content-pad);
   margin-bottom: 20px;
 }
 .mag-teaser-card {
@@ -1208,7 +1222,6 @@ body {
   border-radius: var(--radius-card);
   padding: 18px;
   cursor: pointer;
-  max-width: 560px;
 }
 .mag-teaser-head {
   display: flex;
@@ -1241,7 +1254,8 @@ body {
 }
 .mag-teaser-thumbs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(50px, 86px));
+  justify-content: start;
   gap: var(--space-2);
   margin-bottom: 14px;
 }
@@ -1667,8 +1681,19 @@ body.mag-open { overflow: hidden; }
     overflow: hidden;
   }
   .magazine-reader-top {
-    max-width: 560px;
+    max-width: 720px;
     margin: 0 auto;
     width: 100%;
+  }
+  .mag-card {
+    max-width: 720px;
+  }
+  .mag-card-body {
+    max-width: 60ch;
+    margin-inline: auto;
+    width: 100%;
+  }
+  .mag-fab-bar .mag-add-btn {
+    max-width: 720px;
   }
 }
