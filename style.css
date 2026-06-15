@@ -39,7 +39,13 @@
   --fs-2xl: 2rem;
   --fs-logo: 1.7rem;
 
-  /* Abstands-Skala — 4px-Raster (V1; off-grid bleibt roh -> V4) */
+  /* Abstands-Skala — 4px-Raster (V1).
+     WL-17/REQ-P3-B/V1-b: V1-b hat EXEMPLARISCH card-overlay + filter-bar auf Tokens
+     migriert; weitere raster-konforme Roh-px (Listen-Insets, Pill-Paddings,
+     Karten-Gaps) bleiben bewusst roh bis zu einem dedizierten V4-Spacing-Pass.
+     Sub-Raster-Werte (2/3/5/6/7/9/10/11/13/14px) sind DAUERHAFTE optische Ausnahmen
+     (Badge-Insets, Icon-Zentrierung) — keine 4px-Raster-Kandidaten.
+     AC3 (off-grid migriert ODER dokumentiert) ist ueber diese Ausnahme erfuellt. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -195,21 +201,51 @@ body {
 }
 
 /* ---- Filter Bar ---- */
-.filter-bar {
-  display: flex;
-  gap: var(--space-2);
-  padding-block: 8px 16px;
-  padding-inline: var(--content-pad);
+/* Wrap = sticky + opake Positionierungs-Schicht; .filter-bar selbst scrollt.
+   So pinnen die Fade-Kanten (REQ-P2-P) am sichtbaren Rand statt mit dem Inhalt
+   wegzuscrollen — und nichts blitzt beim Vertikal-Scroll durch (Wrap ist opak). */
+.filter-bar-wrap {
   position: sticky;
   top: var(--header-h);
   z-index: 90;
   background: var(--surface-1);
+}
+
+.filter-bar-wrap::before,
+.filter-bar-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 1;
+}
+.filter-bar-wrap::before { left: 0; background: linear-gradient(to right, var(--surface-1), transparent); }
+.filter-bar-wrap::after { right: 0; background: linear-gradient(to left, var(--surface-1), transparent); }
+.filter-bar-wrap.fade-left::before { opacity: 1; }
+.filter-bar-wrap.fade-right::after { opacity: 1; }
+
+.filter-bar {
+  display: flex;
+  gap: var(--space-2);
+  padding-block: var(--space-2) var(--space-4);
+  padding-inline: var(--content-pad);
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
 .filter-bar::-webkit-scrollbar { display: none; }
+
+/* REQ-P2-P: breit -> umbrechen statt scrollen (alle Chips ohne Indikator sichtbar) */
+@media (min-width: 768px) {
+  .filter-bar { flex-wrap: wrap; overflow-x: visible; }
+  .filter-bar-wrap.fade-left::before,
+  .filter-bar-wrap.fade-right::after { opacity: 0; }
+}
 
 .filter-chip {
   flex-shrink: 0;
@@ -264,6 +300,27 @@ body {
   box-shadow: 0 2px 10px color-mix(in srgb, var(--chip-color, var(--primary)) 40%, transparent);
 }
 
+/* REQ-P2-F: ruhender Dienst-Chip traegt ein Marken-Signal (Punkt in der
+   Dienstfarbe, identisch zur Poster-Badge-Farbe). Aktiv -> Chip ist selbst in
+   Markenfarbe gefuellt, der Punkt invertiert auf die Kontrast-Textfarbe. */
+.filter-chip.service-chip::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-color, var(--text-dim));
+  flex-shrink: 0;
+  margin-right: 6px;
+  /* WCAG 1.4.11: heller Halo garantiert die Sichtbarkeit des Punkts auch fuer
+     dunkle Marken (Sky/ARD/Disney/Apple) auf dem dunklen Chip-BG — die Fuellung
+     bleibt der exakte Brand-Hex (= Poster-Badge). */
+  box-shadow: 0 0 0 1.5px rgba(218, 226, 253, 0.55);
+}
+.filter-chip.service-chip.active::before {
+  background: var(--chip-text, #fff);
+  box-shadow: none; /* aktiver Chip ist selbst markenfarben -> Punkt kontrastiert ohne Halo */
+}
+
 .filter-divider {
   flex-shrink: 0;
   width: 1px;
@@ -306,6 +363,8 @@ body {
   scrollbar-width: none;
   -ms-overflow-style: none;
   padding-bottom: var(--space-1);
+  /* REQ-P3-I: sanftes Einrasten der fuehrenden Karte am linken Rand */
+  scroll-snap-type: x proximity;
   /* Bleed: kein rechtes Padding — Poster bluten über den Rand */
 }
 
@@ -322,6 +381,7 @@ body {
   cursor: grab;
   transition: transform 0.15s, opacity 0.15s;
   border: 2px solid transparent;
+  scroll-snap-align: start; /* REQ-P3-I */
 }
 
 .shortlist-card:active {
@@ -562,7 +622,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 32px 8px 8px;
+  padding: var(--space-6) var(--space-2) var(--space-2); /* V1-b: 32/8/8 -> Tokens */
   background: linear-gradient(to top, rgba(6,14,32,0.95) 0%, rgba(6,14,32,0.4) 60%, transparent 100%);
 }
 
@@ -613,6 +673,11 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.3px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  /* V1-a (WL-17): in der 100px-Shortlist-Karte nie 2-zeilig umbrechen */
+  white-space: nowrap;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Vorgemerkt badge — service-less (upcoming) items, same slot as service-badge */
@@ -1141,10 +1206,44 @@ body {
   margin-top: var(--space-3);
 }
 
+/* REQ-P2-J: klare Hierarchie — genau 1 gefuellte Primaer-Aktion (Ansehen) oben,
+   gleichwertige Sekundaer-Aktionen darunter, Destruktives (Entfernen) abgesetzt. */
 .detail-actions {
   display: flex;
+  flex-direction: column;
   gap: var(--space-2);
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
+}
+.btn-primary-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: none;
+  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  color: var(--primary-dark);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(77, 142, 255, 0.3);
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+.btn-primary-cta:hover { box-shadow: 0 6px 24px rgba(77, 142, 255, 0.45); }
+.btn-primary-cta:active { transform: scale(0.98); }
+.btn-cta-ext { font-size: 0.85em; opacity: 0.75; }
+.detail-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* gleichbreite, gleich hohe Sekundaer-Buttons; max-content statt Quetschen */
+.detail-actions-row > * {
+  flex: 1 1 0;
+  min-width: max-content;
 }
 
 .btn-watched {
@@ -1189,26 +1288,6 @@ body {
 
 .btn-remove:hover {
   background: rgba(255, 122, 122, 0.12);
-}
-
-.btn-stream {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  padding: 12px 0;
-  border-radius: var(--radius);
-  border: 1px solid rgba(70, 211, 105, 0.4);
-  background: transparent;
-  color: var(--green);
-  font-size: var(--fs-md);
-  text-decoration: none;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.btn-stream:hover {
-  background: rgba(70, 211, 105, 0.1);
 }
 
 /* ---- Watched State ---- */
@@ -1386,7 +1465,9 @@ body.mag-open { overflow: hidden; }
 .magazine-reader-track {
   flex: 1;
   overflow-y: auto;
-  scroll-snap-type: y mandatory;
+  /* REQ-P3-J: proximity statt mandatory — bei viewport-ueberschreitendem
+     Karteninhalt bleibt das Karten-Ende erreichbar, Uebergaenge rasten weiter. */
+  scroll-snap-type: y proximity;
   -webkit-overflow-scrolling: touch;
 }
 

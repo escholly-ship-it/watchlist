@@ -136,7 +136,7 @@ function closeOverlay(overlayEl){
 }
 
 function setBackgroundInert(on){
-  document.querySelectorAll('#app > header, #app > #filterBar, #app > #magazineTeaser, #app > #shortlistSection, #app > #watchlist').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
+  document.querySelectorAll('#app > header, #app > .filter-bar-wrap, #app > #magazineTeaser, #app > #shortlistSection, #app > #watchlist').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
 }
 
 function focusables(root){
@@ -273,7 +273,9 @@ function showAutoAddToast(message, type) {
     });
     document.body.appendChild(toast);
   }
-  const colors = { loading: '#555', success: '#1db954', error: '#e53935', info: '#2196f3' };
+  // WL-18: dunklere Status-BG, damit der weisse Text WCAG-AA (>=4.5:1) erreicht.
+  // success #15803d 5.0:1 · info #1565c0 5.8:1 · error #c62828 5.6:1 · loading #555 7.1:1.
+  const colors = { loading: '#555', success: '#15803d', error: '#c62828', info: '#1565c0' };
   toast.style.background = colors[type] || '#555';
   toast.textContent = message;
   toast.style.opacity = '1';
@@ -436,6 +438,10 @@ function isShortlistFull() {
 function renderShortlist() {
   const list = getShortlistItems();
 
+  // Empty-State-Strategie (WL-17/REQ-P3-K): sekundaere Schienen (Shortlist,
+  // Magazin-Teaser) blenden leer komplett aus — die EINZIGE gestaltete
+  // Leeransicht der App ist die Watchlist (#emptyState). Ein Dauer-Hinweis
+  // "Shortlist leer" waere Clutter neben der vollen Watchlist (bewusste Wahl).
   if (list.length === 0) {
     $shortlistSection.classList.add('hidden');
     return;
@@ -719,8 +725,11 @@ function renderFilterBar() {
   // .filter(Boolean) drops the null serviceId of vorgemerkt items — they get
   // their own chip below, not a broken service chip.
   const usedServices = [...new Set(items.map(i => i.serviceId))].filter(Boolean);
-  const existingServiceChips = $filterBar.querySelectorAll('.service-chip');
-  existingServiceChips.forEach(c => c.remove());
+  // REQ-P2-Q: Service-Chips gehoeren ZWISCHEN die Divider (Typ | Service | Sort),
+  // darum vor der .sort-divider einfuegen statt ans Ende anzuhaengen.
+  const sortDivider = $filterBar.querySelector('.sort-divider');
+  const serviceDivider = $filterBar.querySelector('.service-divider');
+  $filterBar.querySelectorAll('.service-chip').forEach(c => c.remove());
 
   usedServices.forEach(svcId => {
     const svc = SERVICES.find(s => s.id === svcId);
@@ -732,11 +741,12 @@ function renderFilterBar() {
     chip.style.setProperty('--chip-text', badgeTextColor(svc.color));
     chip.textContent = svc.name;
     if (activeService === svc.id) chip.classList.add('active');
-    $filterBar.appendChild(chip);
+    $filterBar.insertBefore(chip, sortDivider);
   });
 
   // "Vorgemerkt" chip for service-less (upcoming) items
-  if (items.some(i => i.serviceId == null)) {
+  const hasVorgemerkt = items.some(i => i.serviceId == null);
+  if (hasVorgemerkt) {
     const chip = document.createElement('button');
     chip.className = 'filter-chip service-chip chip-vorgemerkt';
     chip.dataset.service = '__vorgemerkt__';
@@ -744,8 +754,28 @@ function renderFilterBar() {
     chip.style.setProperty('--chip-text', badgeTextColor('#ffb786'));
     chip.textContent = 'Vorgemerkt';
     if (activeService === '__vorgemerkt__') chip.classList.add('active');
-    $filterBar.appendChild(chip);
+    $filterBar.insertBefore(chip, sortDivider);
   }
+
+  // REQ-P2-Q: zwei Divider nie nebeneinander — Service-Divider nur zeigen, wenn
+  // rechts davon wirklich Service-Chips stehen (sonst kollabiert er auf .hidden).
+  if (serviceDivider) serviceDivider.classList.toggle('hidden', usedServices.length === 0 && !hasVorgemerkt);
+
+  // REQ-P2-P: Overflow-Affordanz (Fade links/rechts) nach jedem Rebuild messen.
+  requestAnimationFrame(updateFilterFade);
+}
+
+// REQ-P2-P: blendet links/rechts einen Fade ein, solange in die jeweilige
+// Richtung noch Chips ausserhalb des sichtbaren Bereichs liegen. Ab >=768px
+// bricht die Bar um (overflow:visible) -> max<=0 -> beide Fades aus.
+function updateFilterFade() {
+  const wrap = $filterBar.parentElement;
+  if (!wrap) return;
+  const max = $filterBar.scrollWidth - $filterBar.clientWidth;
+  if (max <= 1) { wrap.classList.remove('fade-left', 'fade-right'); return; }
+  const x = $filterBar.scrollLeft;
+  wrap.classList.toggle('fade-left', x > 1);
+  wrap.classList.toggle('fade-right', x < max - 1);
 }
 
 // ---- Render: Watchlist ----
@@ -788,7 +818,17 @@ function renderWatchlist() {
       const unwatched = filtered.filter(i => !i.watched).length;
       const badge = document.createElement('div');
       badge.className = 'count-badge';
-      badge.textContent = `${unwatched} offen · ${filtered.length} gesamt`;
+      // REQ-P2-R: Filterkontext explizit machen — "gesamt" war bei aktivem
+      // Filter irrefuehrend (es zeigte die gefilterte Teilmenge). Typ UND Service
+      // koennen gleichzeitig aktiv sein (Service-Klick setzt activeFilter nicht
+      // zurueck) -> beide Dimensionen kombiniert nennen.
+      const typeLabel = activeFilter === 'movie' ? 'Filme' : activeFilter === 'tv' ? 'Serien' : '';
+      const typePrefix = typeLabel ? `${typeLabel} ` : '';
+      let scope;
+      if (activeService === '__vorgemerkt__') scope = `${typePrefix}vorgemerkt`;
+      else if (activeService) scope = `${typePrefix}bei ${SERVICES.find(s => s.id === activeService)?.name || 'Dienst'}`;
+      else scope = typeLabel || 'Titel';
+      badge.textContent = `${unwatched} offen · ${filtered.length} ${scope}`;
       $watchlist.appendChild(badge);
     }
 
@@ -1045,14 +1085,18 @@ async function openDetail(item) {
     ${item.overview ? `<p class="detail-overview">${esc(item.overview)}</p>` : ''}
     <div id="detailProviders"></div>
     <div class="detail-actions">
-      ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
-        ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
-      </button>` : ''}
-      <button class="btn-watched" data-id="${item.id}">
-        ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
-      </button>
-      <a class="btn-stream" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener" aria-label="Auf TMDB ansehen">▶︎</a>
-      <button class="btn-remove" data-id="${item.id}">Entfernen</button>
+      <a class="btn-primary-cta" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener" aria-label="Auf TMDB ansehen (öffnet neuen Tab)">
+        <span aria-hidden="true">▶</span> Ansehen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+      </a>
+      <div class="detail-actions-row">
+        ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
+          ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
+        </button>` : ''}
+        <button class="btn-watched" data-id="${item.id}">
+          ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
+        </button>
+        <button class="btn-remove" data-id="${item.id}">Entfernen</button>
+      </div>
     </div>
   `;
 
@@ -1237,6 +1281,10 @@ function bindEvents() {
 
   $btnSave.addEventListener('click', addItem);
 
+  // REQ-P2-P: Fade-Affordanz live halten bei horizontalem Scroll + Resize.
+  $filterBar.addEventListener('scroll', updateFilterFade, { passive: true });
+  window.addEventListener('resize', updateFilterFade);
+
   // Filter chips
   $filterBar.addEventListener('click', (e) => {
     const chip = e.target.closest('.filter-chip');
@@ -1318,6 +1366,8 @@ function renderMagazineTeaser() {
   const $teaser = document.getElementById('magazineTeaser');
   if (!$teaser) return;
   const all = magazineItems();
+  // Empty-State-Strategie (WL-17/REQ-P3-K): Teaser blendet ohne Magazin-Daten
+  // aus (sekundaere Schiene, s. renderShortlist) statt eines Platzhalters.
   if (all.length === 0) { $teaser.classList.add('hidden'); return; }
 
   // Show all the issue's posters in a wrapping grid so the teaser fills out

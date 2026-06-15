@@ -63,17 +63,19 @@
       </button>
     </header>
 
-    <!-- Filter Bar -->
-    <div class="filter-bar" id="filterBar">
-      <button class="filter-chip active" data-filter="all">Alle</button>
-      <button class="filter-chip" data-filter="movie">Filme</button>
-      <button class="filter-chip" data-filter="tv">Serien</button>
-      <div class="filter-divider"></div>
-      <!-- Service filters will be injected dynamically -->
-      <div class="filter-divider sort-divider"></div>
-      <button class="filter-chip sort-chip active" data-sort="added">Neu</button>
-      <button class="filter-chip sort-chip" data-sort="rating">Bewertung</button>
-      <button class="filter-chip sort-chip" data-sort="alpha">A–Z</button>
+    <!-- Filter Bar (Wrap = sticky + Fade-Affordanz, innerer #filterBar scrollt) -->
+    <div class="filter-bar-wrap">
+      <div class="filter-bar" id="filterBar">
+        <button class="filter-chip active" data-filter="all">Alle</button>
+        <button class="filter-chip" data-filter="movie">Filme</button>
+        <button class="filter-chip" data-filter="tv">Serien</button>
+        <div class="filter-divider service-divider hidden"></div>
+        <!-- Service filters werden vor .sort-divider injiziert (REQ-P2-Q) -->
+        <div class="filter-divider sort-divider"></div>
+        <button class="filter-chip sort-chip active" data-sort="added">Neu</button>
+        <button class="filter-chip sort-chip" data-sort="rating">Bewertung</button>
+        <button class="filter-chip sort-chip" data-sort="alpha">A–Z</button>
+      </div>
     </div>
 
     <!-- Wochen-Magazin Teaser (WL-5) -->
