@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0b1326">
@@ -95,10 +95,10 @@
     </main>
 
     <!-- Add Modal -->
-    <div class="modal-overlay" id="addModal">
+    <div class="modal-overlay" id="addModal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
       <div class="modal">
         <div class="modal-header">
-          <h2>Hinzufügen</h2>
+          <h2 id="addModalTitle">Hinzufügen</h2>
           <button class="modal-close" id="modalClose" aria-label="Schließen">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -127,7 +127,7 @@
     </div>
 
     <!-- Detail Modal -->
-    <div class="modal-overlay" id="detailModal">
+    <div class="modal-overlay" id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailModalTitle">
       <div class="modal detail-modal">
         <div class="detail-backdrop" id="detailBackdrop"></div>
         <div class="detail-content" id="detailContent"></div>

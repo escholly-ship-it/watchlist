@@ -15,7 +15,7 @@
   /* Primary (Blue) */
   --primary: #4d8eff;
   --primary-light: #adc6ff;
-  --primary-dark: #002e6a;
+  --primary-dark: #001a40;
 
   /* Tertiary (Orange — accents) */
   --tertiary: #ffb786;
@@ -24,7 +24,7 @@
   /* Text */
   --text: #dae2fd;
   --text-muted: #c2c6d6;
-  --text-dim: #7a7f8e;
+  --text-dim: #9aa0b2;
 
   /* Warn-/Status-Farbe — entkoppelt vom Marken-Rot (V1) */
   --danger: #ff7a7a;
@@ -87,6 +87,12 @@
   padding: 0;
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A11y: sichtbarer Tastatur-Fokus (Maus-Klick bleibt ringfrei via :focus-visible) */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 body {
@@ -165,8 +171,8 @@ body {
 }
 
 .btn-add {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-pill);
   border: none;
   background: linear-gradient(135deg, var(--primary-light), var(--primary));
@@ -207,6 +213,9 @@ body {
 
 .filter-chip {
   flex-shrink: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
   padding: 7px 18px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--ghost);
@@ -250,7 +259,7 @@ body {
 .filter-chip.service-chip.active {
   background: var(--chip-color, var(--primary));
   border-color: var(--chip-color, var(--primary));
-  color: white;
+  color: var(--chip-text, #fff);
   font-weight: 700;
   box-shadow: 0 2px 10px color-mix(in srgb, var(--chip-color, var(--primary)) 40%, transparent);
 }
@@ -360,23 +369,49 @@ body {
 
 .shortlist-remove {
   position: absolute;
+  /* Hit area is the full 44x44 transparent box, anchored to the card's top-right
+     corner so it stays INSIDE the card (overflow:hidden would clip a centred box).
+     The visible 22x22 dark circle is drawn by ::before pinned to top:4px/right:4px
+     (= var(--space-1)), so the optics are unchanged vs. the old 22x22 button. The
+     "x" glyph is positioned over that circle, not in the box centre. */
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  color: white;
+  font-size: 0; /* suppress the literal "x" text node; ::after redraws it sized */
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 5;
+}
+
+.shortlist-remove::before {
+  content: '';
+  position: absolute;
   top: var(--space-1);
   right: var(--space-1);
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: none;
   background: rgba(0, 0, 0, 0.7);
-  color: white;
+  z-index: -1;
+}
+
+/* "x" glyph centred over the visible 22x22 circle (top-right), not the 44px box */
+.shortlist-remove::after {
+  content: '×';
+  position: absolute;
+  /* circle centre inside the 44px box: 4px(--space-1)+11px from top/right
+     -> 15px from top, 29px from left (44-15). */
+  top: 15px;
+  left: 29px;
+  transform: translate(-50%, -50%);
   font-size: var(--fs-sm);
   line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s;
-  z-index: 5;
 }
 
 .shortlist-card:hover .shortlist-remove,
@@ -416,6 +451,7 @@ body {
 /* Shortlist button in detail modal */
 .btn-shortlist {
   padding: 11px 14px;
+  min-height: 44px;
   border-radius: var(--radius);
   border: 1px solid rgba(255, 183, 134, 0.4);
   background: transparent;
@@ -426,6 +462,9 @@ body {
   cursor: pointer;
   transition: background 0.15s;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-shortlist:hover {
@@ -674,8 +713,8 @@ body {
 }
 
 .modal-close {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   background: var(--surface-4);
@@ -723,20 +762,31 @@ body {
   border-color: var(--primary);
 }
 
+/* Keyboard focus gets a visible ring; mouse focus stays ring-free (base outline:none). */
+.search-input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .search-input::placeholder {
   color: var(--text-dim);
 }
 
 .search-clear {
   position: absolute;
-  right: var(--space-2);
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
   background: none;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  padding: var(--space-1);
+  /* Icon stays 18px; hit area grows to 44x44 (a11y). */
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .hidden { display: none !important; }
@@ -900,6 +950,7 @@ body {
 
 .service-btn {
   padding: 10px 4px;
+  min-height: 44px;
   border-radius: var(--radius);
   border: 2px solid var(--ghost);
   background: transparent;
@@ -1001,8 +1052,8 @@ body {
   position: absolute;
   top: var(--space-3);
   right: var(--space-3);
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.6);
@@ -1099,6 +1150,7 @@ body {
 .btn-watched {
   flex: 1;
   padding: var(--space-3);
+  min-height: 44px;
   border-radius: var(--radius);
   border: 1px solid var(--ghost);
   background: transparent;
@@ -1120,6 +1172,7 @@ body {
 
 .btn-remove {
   padding: 12px 14px;
+  min-height: 44px;
   border-radius: var(--radius);
   border: 1px solid rgba(255, 122, 122, 0.4);
   background: transparent;
@@ -1129,6 +1182,9 @@ body {
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-remove:hover {
@@ -1695,5 +1751,15 @@ body.mag-open { overflow: hidden; }
   }
   .mag-fab-bar .mag-add-btn {
     max-width: 720px;
+  }
+}
+
+/* A11y: Bewegung reduzieren, wenn das System es verlangt */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }
