@@ -1297,20 +1297,6 @@ function maybeAutoOpenMagazine() {
   if (magazineItems().length > 0) openMagazineReader();
 }
 
-function genreBadgeColor(name) {
-  const n = (name || '').toLowerCase();
-  if (n.includes('krimi') || n.includes('thriller')) return '#e50914';
-  if (n.includes('drama')) return '#2f6fd6';
-  if (n.includes('sci') || n.includes('fantasy')) return '#0f6e56';
-  if (n.includes('komödie') || n.includes('comedy')) return '#df7412';
-  if (n.includes('doku')) return '#2f8f4e';
-  if (n.includes('horror') || n.includes('mystery')) return '#534ab7';
-  if (n.includes('action') || n.includes('abenteuer') || n.includes('adventure')) return '#b3401d';
-  if (n.includes('liebe') || n.includes('romantik') || n.includes('romance')) return '#993556';
-  if (n.includes('animation') || n.includes('familie')) return '#1d9e75';
-  return '#2d3449';
-}
-
 // Magazin v2 — Variante B (Fokus-Kino): grosses Poster-Hero mit Titel-Overlay,
 // Trailer-Play, Tagline-Zitat, Fakten-Panel, Besetzung mit Fotos, Mood-Tags,
 // Empfehlungen. Jedes neue Feld null-guarded (fehlt -> Block entfaellt).
