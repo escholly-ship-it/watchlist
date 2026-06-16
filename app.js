@@ -698,6 +698,58 @@ const LANG_MAP = {
   da: 'Dänisch', no: 'Norwegisch', nl: 'Niederländisch', pt: 'Portugiesisch',
 };
 
+// WL-13: kuratierte EN→DE-Map für die häufigsten TMDB-Keywords (kein KI). TMDB
+// liefert Keywords NUR englisch; im deutschen Magazin wirken sie fremd. Nicht
+// gemappte Keywords werden ausgeblendet (deKeyword→null), damit NIE ein
+// englischer Mood-Tag im Heft steht — lieber weniger Tags als gemischte Sprache.
+const KEYWORD_DE = {
+  'based on novel or book': 'Romanverfilmung', 'based on novel': 'Romanverfilmung',
+  'based on book': 'Romanverfilmung', 'based on young adult novel': 'Jugendbuchverfilmung',
+  'based on true story': 'Nach wahrer Begebenheit', 'based on a true story': 'Nach wahrer Begebenheit',
+  'based on real events': 'Nach wahren Ereignissen', 'based on comic': 'Comicverfilmung',
+  'based on comic book': 'Comicverfilmung', 'based on video game': 'Videospielverfilmung',
+  'based on play': 'Nach einem Theaterstück', 'based on tv series': 'Nach einer Serie',
+  'biography': 'Biografie', 'first love': 'Erste Liebe', 'forbidden love': 'Verbotene Liebe',
+  'love triangle': 'Dreiecksbeziehung', 'romance': 'Romanze', 'wedding': 'Hochzeit',
+  'divorce': 'Scheidung', 'pregnancy': 'Schwangerschaft', 'friendship': 'Freundschaft',
+  'family': 'Familie', 'dysfunctional family': 'Zerrüttete Familie',
+  'father son relationship': 'Vater-Sohn-Beziehung', 'mother daughter relationship': 'Mutter-Tochter-Beziehung',
+  'coming of age': 'Erwachsenwerden', 'high school': 'Highschool', 'teenager': 'Jugendliche',
+  'murder': 'Mord', 'witness to murder': 'Zeuge eines Mordes', 'serial killer': 'Serienmörder',
+  'revenge': 'Rache', 'betrayal': 'Verrat', 'kidnapping': 'Entführung', 'heist': 'Raubüberfall',
+  'robbery': 'Raubüberfall', 'conspiracy': 'Verschwörung', 'corruption': 'Korruption',
+  'investigation': 'Ermittlung', 'detective': 'Detektiv', 'police': 'Polizei',
+  'crime': 'Verbrechen', 'mafia': 'Mafia', 'gangster': 'Gangster', 'prison': 'Gefängnis',
+  'drugs': 'Drogen', 'drug cartel': 'Drogenkartell', 'spy': 'Spionage', 'espionage': 'Spionage',
+  'assassin': 'Auftragskiller', 'terrorism': 'Terrorismus', 'survival': 'Überleben',
+  'time travel': 'Zeitreise', 'dystopia': 'Dystopie', 'apocalypse': 'Apokalypse',
+  'post-apocalyptic future': 'Postapokalypse', 'artificial intelligence': 'Künstliche Intelligenz',
+  'robot': 'Roboter', 'space travel': 'Raumfahrt', 'alien': 'Außerirdische',
+  'outer space': 'Weltraum', 'virtual reality': 'Virtuelle Realität', 'hacker': 'Hacker',
+  'dinosaur': 'Dinosaurier', 'superhero': 'Superheld', 'supervillain': 'Superschurke',
+  'magic': 'Magie', 'witch': 'Hexe', 'vampire': 'Vampir', 'werewolf': 'Werwolf',
+  'zombie': 'Zombie', 'ghost': 'Geist', 'haunted house': 'Spukhaus', 'supernatural': 'Übernatürlich',
+  'dragon': 'Drache', 'monster': 'Monster', 'fairy tale': 'Märchen', 'mythology': 'Mythologie',
+  'world war ii': 'Zweiter Weltkrieg', 'world war i': 'Erster Weltkrieg', 'cold war': 'Kalter Krieg',
+  'war': 'Krieg', 'soldier': 'Soldat', 'military': 'Militär', 'holocaust': 'Holocaust',
+  'slavery': 'Sklaverei', 'racism': 'Rassismus', 'politics': 'Politik', 'pandemic': 'Pandemie',
+  'death': 'Tod', 'grief': 'Trauer', 'mental illness': 'Psychische Erkrankung',
+  'depression': 'Depression', 'addiction': 'Sucht', 'alcoholism': 'Alkoholismus',
+  'music': 'Musik', 'musician': 'Musiker', 'dance': 'Tanz', 'sport': 'Sport', 'boxing': 'Boxen',
+  'martial arts': 'Kampfkunst', 'road trip': 'Roadtrip', 'treasure hunt': 'Schatzsuche',
+  'car chase': 'Verfolgungsjagd', 'small town': 'Kleinstadt', 'island': 'Insel',
+  'christmas': 'Weihnachten', 'halloween': 'Halloween', 'immigrant': 'Einwanderer',
+  'religion': 'Religion', 'lgbt': 'LGBTQ', 'coming out': 'Coming-out', 'amnesia': 'Amnesie',
+  'secret identity': 'Geheime Identität', 'twist ending': 'Überraschendes Ende',
+  'sequel': 'Fortsetzung', 'prequel': 'Vorgeschichte', 'remake': 'Neuverfilmung',
+  'anime': 'Anime', 'anthology': 'Anthologie', 'nonlinear timeline': 'Nichtlineare Erzählung',
+};
+
+// EN-Keyword → kuratiertes Deutsch, oder null wenn nicht gemappt (→ ausgeblendet).
+function deKeyword(k) {
+  return KEYWORD_DE[(k || '').toLowerCase().trim()] || null;
+}
+
 function initials(name) {
   return (name || '').split(/\s+/).filter(Boolean).slice(0, 2)
     .map((w) => w[0]).join('').toUpperCase() || '?';
@@ -725,6 +777,14 @@ function renderFilterBar() {
   // .filter(Boolean) drops the null serviceId of vorgemerkt items — they get
   // their own chip below, not a broken service chip.
   const usedServices = [...new Set(items.map(i => i.serviceId))].filter(Boolean);
+  const hasVorgemerkt = items.some(i => i.serviceId == null);
+  // WL-19: war ein Service-/Vorgemerkt-Filter aktiv, dessen Gruppe jetzt KEIN Item
+  // mehr hat (letztes entfernt/geschaut/promoted), gibt es seinen Chip nicht mehr —
+  // der Filter zeigte sonst einen toten „Keine Ergebnisse"-Zustand ohne Ausweg.
+  // Zurueck auf „Alle", BEVOR renderWatchlist filtert.
+  if (activeService === '__vorgemerkt__' ? !hasVorgemerkt : (activeService && !usedServices.includes(activeService))) {
+    activeService = null;
+  }
   // REQ-P2-Q: Service-Chips gehoeren ZWISCHEN die Divider (Typ | Service | Sort),
   // darum vor der .sort-divider einfuegen statt ans Ende anzuhaengen.
   const sortDivider = $filterBar.querySelector('.sort-divider');
@@ -745,7 +805,6 @@ function renderFilterBar() {
   });
 
   // "Vorgemerkt" chip for service-less (upcoming) items
-  const hasVorgemerkt = items.some(i => i.serviceId == null);
   if (hasVorgemerkt) {
     const chip = document.createElement('button');
     chip.className = 'filter-chip service-chip chip-vorgemerkt';
@@ -1472,8 +1531,11 @@ function magazineCardHtml(it, i) {
   const reason = it.reason ? `
       <div class="mag-why"><span class="mag-box-label mag-why-label">Warum für dich</span><span class="mag-box-text">${esc(it.reason)}${fanOfInline}</span></div>` : '';
 
-  const tags = (it.keywords && it.keywords.length) ? `
-      <div class="mag-tags">${it.keywords.slice(0, 4).map(k => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>` : '';
+  // WL-13: nur kuratierte deutsche Keywords zeigen (englische TMDB-Rohwerte
+  // ausblenden), dedupliziert (mehrere EN-Keys können auf dasselbe DE mappen).
+  const deTags = [...new Set((it.keywords || []).map(deKeyword).filter(Boolean))];
+  const tags = deTags.length ? `
+      <div class="mag-tags">${deTags.slice(0, 4).map(k => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>` : '';
 
   const recs = (it.recommendations && it.recommendations.length) ? `
       <div class="mag-recs">
