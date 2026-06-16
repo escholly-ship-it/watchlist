@@ -743,6 +743,20 @@ const KEYWORD_DE = {
   'secret identity': 'Geheime Identität', 'twist ending': 'Überraschendes Ende',
   'sequel': 'Fortsetzung', 'prequel': 'Vorgeschichte', 'remake': 'Neuverfilmung',
   'anime': 'Anime', 'anthology': 'Anthologie', 'nonlinear timeline': 'Nichtlineare Erzählung',
+  // Coverage-Ausbau (Live-Magazin-Verify 2026-06-16): beobachtete reale + weitere häufige Keywords
+  'space': 'Weltraum', 'astronaut': 'Astronaut', 'spacecraft': 'Raumschiff', 'musical': 'Musical',
+  'based on play or musical': 'Nach Bühnenvorlage', 'impostor': 'Hochstapler', 'con artist': 'Trickbetrüger',
+  'sword fight': 'Schwertkampf', 'gunslinger': 'Revolverheld', 'showdown': 'Showdown', 'fistfight': 'Faustkampf',
+  'western': 'Western', 'cowboy': 'Cowboy', 'pirate': 'Pirat', 'medieval': 'Mittelalter',
+  'undercover': 'Undercover', 'hostage': 'Geiselnahme', 'bank robbery': 'Bankraub', 'escape': 'Flucht',
+  'rescue': 'Rettung', 'gambling': 'Glücksspiel', 'casino': 'Casino', 'twins': 'Zwillinge', 'orphan': 'Waise',
+  'father daughter relationship': 'Vater-Tochter-Beziehung', 'school': 'Schule', 'college': 'Studium',
+  'courtroom': 'Gerichtssaal', 'trial': 'Gerichtsprozess', 'hospital': 'Krankenhaus', 'cancer': 'Krebs',
+  'submarine': 'U-Boot', 'airplane': 'Flugzeug', 'train': 'Zug', 'rebellion': 'Rebellion',
+  'revolution': 'Revolution', 'dictatorship': 'Diktatur', 'royalty': 'Königshaus', 'king': 'König',
+  'queen': 'Königin', 'time loop': 'Zeitschleife', 'parallel world': 'Parallelwelt', 'clone': 'Klon',
+  'experiment': 'Experiment', 'curse': 'Fluch', 'demon': 'Dämon', 'exorcism': 'Exorzismus', 'cult': 'Sekte',
+  'dog': 'Hund', 'horse': 'Pferd', 'animal': 'Tier', 'climate change': 'Klimawandel',
 };
 
 // EN-Keyword → kuratiertes Deutsch, oder null wenn nicht gemappt (→ ausgeblendet).
