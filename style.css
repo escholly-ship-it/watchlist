@@ -1795,7 +1795,16 @@ body.mag-open { overflow: hidden; }
   background: var(--surface-2);
   border-radius: 10px;
   padding: 7px;
+  /* WL-20: Empfehlungen sind klickbar (→ auf die Watchlist) */
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
+@media (hover: hover) {
+  .mag-rec:hover { background: var(--surface-4); border-color: rgba(173, 198, 255, 0.3); }
+  .mag-rec:hover .mag-rec-add { color: var(--primary-light); border-color: var(--primary-light); }
+}
+.mag-rec:active { transform: scale(0.97); }
 .mag-rec img,
 .mag-rec-ph {
   width: 34px;
@@ -1805,10 +1814,31 @@ body.mag-open { overflow: hidden; }
   object-fit: cover;
   background: var(--surface-4);
 }
-.mag-rec span {
+.mag-rec-title {
   font-size: var(--fs-xs);
   color: var(--text-muted);
   line-height: 1.25;
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* "+"-Affordanz rechts: signalisiert „antippen zum Hinzufügen" (WL-20) */
+.mag-rec-add {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
 }
 
 /* ---- Tablet/Desktop ---- */
