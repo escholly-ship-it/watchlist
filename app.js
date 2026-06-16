@@ -68,11 +68,19 @@ SERVICES.forEach(svc => {
 });
 
 // ---- Sanitize (XSS protection) ----
+// esc(): Text-Kontext (innerHTML zwischen Tags) — escaped &<>.
 function esc(str) {
   if (!str) return '';
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
+}
+
+// WL-21: escAttr() für Attribut-Werte in doppelt-gequoteten Attributen
+// (alt/aria-label/data-*/src). esc() escaped NICHT " oder ' → ein Wert mit
+// ASCII-" bräche das Attribut. escAttr ergänzt "→&quot; + '→&#39;.
+function escAttr(str) {
+  return esc(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ---- A11y: WCAG-konforme Text-Farbe (dunkel/hell) fuer solide Badges ----
@@ -461,7 +469,7 @@ function renderShortlist() {
 
     card.innerHTML = `
       ${item.poster
-        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${esc(item.title)}" loading="lazy">`
+        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${escAttr(item.title)}" loading="lazy">`
         : `<div class="shortlist-no-poster">🎬</div>`
       }
       ${svc ? `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>` : ''}
@@ -923,7 +931,7 @@ function createCard(item) {
 
   card.innerHTML = `
     ${item.poster
-      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" alt="${esc(item.title)}" loading="lazy">`
+      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" alt="${escAttr(item.title)}" loading="lazy">`
       : `<div class="card-no-poster">🎬</div>`
     }
     <div class="card-overlay">
@@ -1448,7 +1456,7 @@ function renderMagazineTeaser() {
   const thumbs = all.slice(0, 12)
     .map(it => {
       const url = tmdbPoster(it.poster_path, 'w185');
-      return url ? `<img class="mag-teaser-thumb" src="${esc(url)}" alt="" loading="lazy">` : '';
+      return url ? `<img class="mag-teaser-thumb" src="${escAttr(url)}" alt="" loading="lazy">` : '';
     }).join('');
 
   const neu = (magazine.counts && magazine.counts.neu) || 0;
@@ -1534,7 +1542,7 @@ function magazineCardHtml(it, i) {
       <div class="mag-cast">${it.cast.slice(0, 4).map(m => {
         const photo = tmdbProfile(m.profile_path);
         const inner = photo
-          ? `<img src="${esc(photo)}" alt="" loading="lazy">`
+          ? `<img src="${escAttr(photo)}" alt="" loading="lazy">`
           : `<span class="mag-cast-ini">${esc(initials(m.name))}</span>`;
         return `<div class="mag-cast-m"><div class="mag-cast-av">${inner}</div><span class="mag-cast-name">${esc(m.name)}</span></div>`;
       }).join('')}</div>` : '';
@@ -1561,14 +1569,14 @@ function magazineCardHtml(it, i) {
         <span class="mag-box-label mag-recs-label">Das könnte dir auch gefallen</span>
         <div class="mag-recs-row">${it.recommendations.slice(0, 2).map(r => {
           const poster = tmdbPoster(r.poster_path, 'w185');
-          return `<div class="mag-rec" role="button" tabindex="0" data-rec-id="${r.id}" data-rec-title="${esc(r.title)}" aria-label="${esc(r.title)} zur Watchlist hinzufügen">${poster ? `<img src="${esc(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span class="mag-rec-title">${esc(r.title)}</span><span class="mag-rec-add" aria-hidden="true">+</span></div>`;
+          return `<div class="mag-rec" role="button" tabindex="0" data-rec-id="${r.id}" data-rec-title="${escAttr(r.title)}" aria-label="${escAttr(r.title)} zur Watchlist hinzufügen">${poster ? `<img src="${escAttr(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span class="mag-rec-title">${esc(r.title)}</span><span class="mag-rec-add" aria-hidden="true">+</span></div>`;
         }).join('')}</div>
       </div>` : '';
 
   return `
   <article class="mag-card mag-card-v2">
     <div class="mag-hero">
-      ${hero ? `<img src="${esc(hero)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
+      ${hero ? `<img src="${escAttr(hero)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
       <span class="mag-hero-tags">${heroTags.join(' · ')}</span>
       ${upBadge}
       ${trailerBtn}
