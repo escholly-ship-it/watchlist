@@ -1542,8 +1542,9 @@ function magazineCardHtml(it, i) {
   const overview = it.overview ? `<p class="mag-card-overview">${esc(it.overview)}</p>` : '';
 
   const fanOfInline = it.fan_of ? ` <span class="mag-why-fan">Für Fans von ${esc(it.fan_of)}.</span>` : '';
+  // WL-20: „Warum für dich" war ein Calque aus dem Englischen → idiomatisches Deutsch.
   const reason = it.reason ? `
-      <div class="mag-why"><span class="mag-box-label mag-why-label">Warum für dich</span><span class="mag-box-text">${esc(it.reason)}${fanOfInline}</span></div>` : '';
+      <div class="mag-why"><span class="mag-box-label mag-why-label">Warum es zu dir passt</span><span class="mag-box-text">${esc(it.reason)}${fanOfInline}</span></div>` : '';
 
   // WL-13: nur kuratierte deutsche Keywords zeigen (englische TMDB-Rohwerte
   // ausblenden), dedupliziert (mehrere EN-Keys können auf dasselbe DE mappen).
@@ -1551,12 +1552,16 @@ function magazineCardHtml(it, i) {
   const tags = deTags.length ? `
       <div class="mag-tags">${deTags.slice(0, 4).map(k => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>` : '';
 
+  // WL-20: Label idiomatisch (statt Calque „Wenn dir gefällt") + Empfehlungen
+  // klickbar → Titel auf die Watchlist. Rec-Daten tragen nur id/title/poster
+  // (kein media_type) → delegiertes Handling über data-rec-* (Reader rendert
+  // per innerHTML); der Klick löst media_type per Titel-Suche auf.
   const recs = (it.recommendations && it.recommendations.length) ? `
       <div class="mag-recs">
-        <span class="mag-box-label mag-recs-label">Wenn dir gefällt</span>
+        <span class="mag-box-label mag-recs-label">Das könnte dir auch gefallen</span>
         <div class="mag-recs-row">${it.recommendations.slice(0, 2).map(r => {
           const poster = tmdbPoster(r.poster_path, 'w185');
-          return `<div class="mag-rec">${poster ? `<img src="${esc(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span>${esc(r.title)}</span></div>`;
+          return `<div class="mag-rec" role="button" tabindex="0" data-rec-id="${r.id}" data-rec-title="${esc(r.title)}" aria-label="${esc(r.title)} zur Watchlist hinzufügen">${poster ? `<img src="${esc(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span class="mag-rec-title">${esc(r.title)}</span><span class="mag-rec-add" aria-hidden="true">+</span></div>`;
         }).join('')}</div>
       </div>` : '';
 
@@ -1784,6 +1789,59 @@ async function addFromMagazine(it) {
   return true;
 }
 
+// WL-20: Empfehlungs-Karte → Titel auf die Watchlist. Rec-Daten tragen KEIN
+// media_type (nur id/title/poster) → media_type per Titel-Suche (id-Match,
+// sprachunabhängig) auflösen, dann direkt adden (Provider-Lookup + vorgemerkt-
+// Fallback). Bewusst OHNE die Add-Modal-Maschinerie (closeAddModal würde sonst
+// inert/Fokus des offenen Magazin-Readers stören).
+const pendingRecAdds = new Set(); // WL-20 P2: Re-Entry-Guard gegen nebenläufigen Doppel-Klick
+async function addRecommendationFromMagazine(rec) {
+  if (!rec || !rec.id || pendingRecAdds.has(rec.id)) return;
+  pendingRecAdds.add(rec.id);
+  showAutoAddToast('Wird hinzugefügt…', 'loading');
+  try {
+    const results = await searchTmdb(rec.title);
+    const match = results.find(r => r.id === rec.id) || results.find(r => getTitle(r) === rec.title);
+    if (!match) { showAutoAddToast(`„${rec.title}" konnte nicht aufgelöst werden`, 'error'); return; }
+    const type = getTypeTag(match);
+    // WL-20 P2: Dedup auf tmdbId+type (konsistent mit addItem/addFromMagazine/
+    // addVorgemerkt; TMDB-ids sind pro media_type vergeben → erst nach Typ-
+    // Auflösung autoritativ prüfbar, daher hier statt am Funktionsanfang).
+    if (items.some(i => i.tmdbId === match.id && i.type === type)) {
+      showAutoAddToast(`„${getTitle(match)}" ist schon auf deiner Watchlist`, 'info');
+      return;
+    }
+    const providers = await fetchProviders(match.id, type);
+    const serviceId = providers.flat[0] || providers.rent[0] || providers.buy[0] || null;
+    const rating = match.vote_average ? Math.round(match.vote_average * 10) / 10 : null;
+    if (!serviceId) {
+      const added = addVorgemerkt({
+        tmdbId: match.id, title: getTitle(match), year: getYear(match), type,
+        poster: match.poster_path, backdrop: match.backdrop_path, overview: match.overview,
+        rating, releaseDate: match.release_date || match.first_air_date || null,
+      });
+      showAutoAddToast(`„${getTitle(match)}" ${added ? 'vorgemerkt' : 'ist schon auf deiner Watchlist'}`, added ? 'success' : 'info');
+      return;
+    }
+    items.unshift({
+      id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+      tmdbId: match.id, title: getTitle(match), year: getYear(match), type,
+      poster: match.poster_path, backdrop: match.backdrop_path, overview: match.overview || '',
+      rating, serviceId, watched: false, addedAt: Date.now(), updatedAt: Date.now(), providers,
+    });
+    saveItems();
+    renderFilterBar();
+    renderWatchlist();
+    showAutoAddToast(`✓ „${getTitle(match)}" hinzugefügt`, 'success');
+  } catch (e) {
+    console.error('Rec add error:', e);
+    showAutoAddToast('Fehler beim Hinzufügen', 'error');
+  } finally {
+    pendingRecAdds.delete(rec.id);
+    updateFab(magCurrentIdx); // WL-20 P3: FAB-Stand auffrischen, falls Rec == sichtbare Karte
+  }
+}
+
 const $magClose = document.getElementById('magazineClose');
 if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
 document.addEventListener('keydown', (e) => {
@@ -1800,6 +1858,21 @@ if ($magAddBtn) {
     $magAddBtn.textContent = 'Wird hinzugefügt…';
     await addFromMagazine(it);
     updateFab(magCurrentIdx);
+  });
+}
+
+// WL-20: delegierter Klick/Tastatur-Handler für die klickbaren Empfehlungen
+// (der Reader rendert Karten per innerHTML → Delegation statt Per-Element).
+const $magTrack = document.getElementById('magazineTrack');
+if ($magTrack) {
+  const handleRec = (el) => {
+    if (el) addRecommendationFromMagazine({ id: parseInt(el.dataset.recId, 10), title: el.dataset.recTitle });
+  };
+  $magTrack.addEventListener('click', (e) => handleRec(e.target.closest('.mag-rec')));
+  $magTrack.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target.closest('.mag-rec');
+    if (el) { e.preventDefault(); handleRec(el); }
   });
 }
 
