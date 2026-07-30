@@ -33,6 +33,12 @@
 //   schon multi-tenant (magazine:${apiKey}) — keine App-Aenderung noetig.
 // Plan B (2026-05-14): Producer-Konsolidierung Mac/GHA/CC → Worker als
 //   single source. Match-Schwelle MEDIUM = scoreWithTaste >= 0.35.
+// WL-22 (2026-07-30): Ausbeute-Kollaps-Fix. Kill-Counter je Rubrik (Messung
+//   vor jeder weiteren Schrauben-Drehung), Score-Renormalisierung bei fehlenden
+//   Signalen (discover hat nie cast, Demnaechst oft vote_average=0 — fehlende
+//   Daten sind keine schlechten Daten), neue Katalog-Rubrik "entdeckt"
+//   (taste-genre-basierte Perlen ohne Datumsfenster — der Pool erschoepft
+//   nicht), Taste-Prewarm-Sample 30 + watched-Titel doppelt gewichtet.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants
@@ -102,7 +108,11 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const MIN_RATING = 5.5;
 const MIN_VOTES = 20;
 const MEDIUM_THRESHOLD = 0.35;  // User-Decision 2026-05-14
+// Inline-Fallback im Build-Pfad bleibt bei 15: am Rebuild-Tag teilen sich
+// Taste-Calls und Pipeline-Calls EINE Invocation; 30 wuerde die 50er-Wand
+// reissen. Der 03:00-Prewarm hat die Invocation fuer sich allein → 30.
 const TASTE_SAMPLE_SIZE = 15;
+const TASTE_PREWARM_SAMPLE_SIZE = 30;
 const TASTE_CACHE_TTL_DAYS = 8;
 const TELEGRAM_CHUNK_LIMIT = 4000;
 
@@ -112,8 +122,10 @@ const NON_PREFERRED_LANG_FACTOR = 0.5;
 
 // ── Magazine knobs (WL-5) ────────────────────────────────────────────────
 // Subrequest budget on Workers Free is 50/invocation (fetch + KV combined).
-// Worst case: 4-6 discover + ≤16 details + 1 Telegram + ~8 KV ≈ 31 — the
-// TMDB_CALL_CEILING is a runtime guard well below the wall.
+// Seit WL-22 gilt: die verbindliche Budget-Herleitung steht am
+// TMDB_CALL_CEILING (50 − KV ~8 − Marge 6 = 36); worst case ist der
+// stale-Taste-Tag (Inline-Rebuild 15 + 6 discover + 2 Katalog + Enrich),
+// den der Ceiling hart deckelt. MAGAZINE_ENRICH_CAP gilt JE Sektion.
 const MAGAZINE_NEW_COUNT = 8;        // Rubrik "Neu fuer dich"
 const MAGAZINE_UPCOMING_COUNT = 4;   // Rubrik "Demnaechst"
 const MAGAZINE_ENRICH_CAP = 16;      // hard cap on per-title detail calls
@@ -122,7 +134,19 @@ const MAGAZINE_LOOKAHEAD_DAYS = 14;  // legacy "demnaechst" window (pre-WL-9)
 const MAGAZINE_UPCOMING_DAYS = 45;   // WL-9 "demnaechst" window: next 45d (digital releases)
 const MAGAZINE_SEEN_DAYS = 35;       // dedup window vs previous issues
 const MAGAZINE_MIN_NEW_CANDIDATES = 5; // below this → fetch discover page 2
-const TMDB_CALL_CEILING = 40;        // runtime guard on TMDB calls per invocation
+// WL-22 Rubrik "entdeckt": Katalog-Perlen passend zum Taste-Profil, ohne
+// Datumsfenster. Discover-Seite rotiert taeglich (1..CATALOG_PAGE_SPAN), damit
+// der Pool nicht wie das 30d-Fenster nach wenigen Builds erschoepft.
+const MAGAZINE_CATALOG_COUNT = 4;
+const CATALOG_MIN_RATING = 7.0;
+const CATALOG_MIN_VOTES = 200;
+const CATALOG_PAGE_SPAN = 5;
+// Herleitung Ceiling (it-architekt-Pass 2026-07-30): Free-Tier-Wand ist 50
+// Subrequests fuer TMDB UND KV zusammen. Gemessene KV-Last eines Builds ~8,
+// Sicherheitsmarge 6 → 50 − 8 − 6 = 36. Der Ceiling ist der einzige echte
+// Guard: MAGAZINE_ENRICH_CAP deckelt nur JE Sektion (detailCalls ist
+// funktionslokal), nicht je Invocation. Invariante: total ≤ 36 + 8 = 44.
+const TMDB_CALL_CEILING = 36;        // runtime guard on TMDB calls per invocation
 
 // WL-11: roster of sync-keys that each get a personal weekly magazine. Lives in
 // KV as a JSON array; the owner is always included unconditionally (see
@@ -138,6 +162,9 @@ const TEST_SYNC_KEY = 'a'.repeat(40);
 // counter leak: each invocation is a fresh isolate.
 let tmdbCalls = 0;
 let kvCalls = 0;
+// WL-22: true sobald der TMDB_CALL_CEILING waehrend des Enrichments greift —
+// vorher schnitt der Guard still Inhalt ab (der Alarm-Pfad war unsichtbar).
+let ceilingHit = false;
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP entrypoints
@@ -337,6 +364,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
   const startedAt = Date.now();
   tmdbCalls = 0;
   kvCalls = 0;
+  ceilingHit = false;
   const log = [];
   const note = (msg) => { log.push(msg); console.log(msg); };
 
@@ -371,7 +399,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       isoDate(addDays(today, -MAGAZINE_LOOKBACK_DAYS)), todayStr, 1, 5, env,
     );
     note(`Neu raw candidates: ${newRaw.length} (tmdbCalls=${tmdbCalls})`);
-    let newScored = scoreAndFilter(newRaw, taste, watchlistIds, seen);
+    let { list: newScored, kills: newKills } = scoreAndFilter(newRaw, taste, watchlistIds, seen);
 
     // Fallback: thin yield → widen with discover page 2 (P2-NEU-1 fix)
     if (newScored.length < MAGAZINE_MIN_NEW_CANDIDATES) {
@@ -381,9 +409,10 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       );
       const known = new Set(newRaw.map((r) => itemKey(r)));
       newRaw = newRaw.concat(page2.filter((r) => !known.has(itemKey(r))));
-      newScored = scoreAndFilter(newRaw, taste, watchlistIds, seen);
+      ({ list: newScored, kills: newKills } = scoreAndFilter(newRaw, taste, watchlistIds, seen));
       note(`Neu after fallback: ${newScored.length}`);
     }
+    note(`Neu kill-split: ${JSON.stringify(newKills)}`);
 
     // ── Rubrik "Demnaechst" (WL-9): upcoming digital/TV releases next 45d ──
     const upRaw = await fetchMagazineWindow(
@@ -392,35 +421,73 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
     );
     note(`Demnaechst raw candidates: ${upRaw.length} (tmdbCalls=${tmdbCalls})`);
     const newKeys = new Set(newScored.map((r) => r.key));
-    const upScored = scoreAndFilter(
+    const { list: upScored, kills: upKills } = scoreAndFilter(
       upRaw.filter((r) => !newKeys.has(itemKey(r))),
       taste, watchlistIds, seen, { relaxVotes: true },
     );
     note(`Neu scored: ${newScored.length} · Demnaechst scored: ${upScored.length}`);
+    note(`Demnaechst kill-split: ${JSON.stringify(upKills)}`);
 
     // ── Enrichment: ONE combined details call per candidate ──
+    // Reihenfolge fixiert Neu → Demnaechst → Entdeckt: greift ein Budget-Cap,
+    // trifft die Kappung die additive Katalog-Rubrik, nie die tragenden
+    // Rubriken (it-architekt-Pass 2026-07-30).
     const neuItems = await enrichMagazineItems(
       newScored, MAGAZINE_NEW_COUNT, { requireProviders: true }, taste, tasteSample, env, note,
     );
     const upItems = await enrichMagazineItems(
       upScored, MAGAZINE_UPCOMING_COUNT, { requireProviders: false }, taste, tasteSample, env, note,
     );
+
+    // ── Rubrik "entdeckt" (WL-22): Katalog-Perlen zum Taste-Profil ──
+    // Bewusst NACH dem Enrichment der tragenden Rubriken: auch die zwei
+    // Katalog-Discover-Calls gehen nur vom Rest-Budget ab (qa-Pass P2-1) —
+    // am stale-Taste-Tag (Inline-Rebuild, 15 Calls) verhungert sonst das
+    // Neu-Enrichment.
+    const topGenreIds = Object.entries(taste.genres)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([gid]) => gid);
+    let catScored = [];
+    let catKills = { watchlist: 0, seen: 0, lowVotes: 0, lowRating: 0, belowTaste: 0, kept: 0 };
+    if (topGenreIds.length === 0) {
+      note('Entdeckt skipped — taste profile has no genres');
+    } else if (tmdbCalls + 2 > TMDB_CALL_CEILING) {
+      ceilingHit = true;
+      note('Entdeckt skipped — TMDB budget exhausted before catalog discover');
+    } else {
+      const catRaw = await fetchCatalogWindow(topGenreIds, env);
+      note(`Entdeckt raw candidates: ${catRaw.length} (tmdbCalls=${tmdbCalls})`);
+      const upKeys = new Set(upScored.map((r) => r.key));
+      ({ list: catScored, kills: catKills } = scoreAndFilter(
+        catRaw.filter((r) => !newKeys.has(itemKey(r)) && !upKeys.has(itemKey(r))),
+        taste, watchlistIds, seen,
+      ));
+      note(`Entdeckt scored: ${catScored.length} · kill-split: ${JSON.stringify(catKills)}`);
+    }
+    const entdecktItems = await enrichMagazineItems(
+      catScored, MAGAZINE_CATALOG_COUNT,
+      { requireProviders: true, reasonPrefix: 'Aus dem Katalog entdeckt — ' },
+      taste, tasteSample, env, note,
+    );
     // Sort by the displayed badge date (DE digital date for WL-9 upcoming).
     upItems.sort((a, b) =>
       ((a.upcoming_date || a.release_date) || '').localeCompare((b.upcoming_date || b.release_date) || ''));
-    note(`Enriched: neu=${neuItems.length} demnaechst=${upItems.length} (tmdbCalls=${tmdbCalls})`);
+    note(`Enriched: neu=${neuItems.length} demnaechst=${upItems.length} entdeckt=${entdecktItems.length} (tmdbCalls=${tmdbCalls}, ceilingHit=${ceilingHit})`);
 
     // Honest subrequest accounting (WL-11): tmdb + kv are both measured, no
     // estimate. The two KV writes further down (magazine + seen) are added
     // explicitly to the dryRun report so it matches a real build's cost; the
     // live return re-reads the counters after those writes. The cron path adds
     // one more KV read (the roster) outside this function.
-    if (neuItems.length === 0 && upItems.length === 0) {
-      const msg = 'Magazin diese Woche übersprungen — keine passenden Neuerscheinungen gefunden.';
+    const kills = { neu: newKills, demnaechst: upKills, entdeckt: catKills };
+
+    if (neuItems.length === 0 && upItems.length === 0 && entdecktItems.length === 0) {
+      const msg = 'Magazin diese Woche übersprungen — keine passenden Titel gefunden.';
       note(msg);
       if (!dryRun) await postTelegram(`⚠️ ${msg}`, env);
       return {
-        ok: false, source, skipped: true, message: msg,
+        ok: false, source, skipped: true, message: msg, kills, capped: ceilingHit,
         subrequests: { tmdb: tmdbCalls, kv: kvCalls, total: tmdbCalls + kvCalls },
         log, elapsedMs: Date.now() - startedAt,
       };
@@ -435,10 +502,11 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
         date: todayStr,
         ts: Math.floor(Date.now() / 1000),
       },
-      counts: { neu: neuItems.length, demnaechst: upItems.length },
+      counts: { neu: neuItems.length, demnaechst: upItems.length, entdeckt: entdecktItems.length },
       sections: [
         { id: 'neu', title: 'Neu für dich', items: neuItems },
         { id: 'demnaechst', title: 'Demnächst', items: upItems },
+        { id: 'entdeckt', title: 'Für dich entdeckt', items: entdecktItems },
       ],
     };
 
@@ -446,7 +514,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       // +2 for the magazine + seen writes a real build would perform.
       const kvLive = kvCalls + 2;
       return {
-        ok: true, source, dryRun: true, magazine,
+        ok: true, source, dryRun: true, magazine, kills, capped: ceilingHit,
         subrequests: { tmdb: tmdbCalls, kv: kvLive, total: tmdbCalls + kvLive },
         log, elapsedMs: Date.now() - startedAt,
       };
@@ -456,7 +524,7 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
 
     // Update seen state so next issue does not repeat titles
     const now = Math.floor(Date.now() / 1000);
-    for (const it of [...neuItems, ...upItems]) {
+    for (const it of [...neuItems, ...upItems, ...entdecktItems]) {
       seen[it.key] = { title: it.title, ts: now, date: todayStr };
     }
     await saveMagazineSeen(env, owner, seen);
@@ -470,6 +538,8 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
       source,
       issue: magazine.issue,
       counts: magazine.counts,
+      kills,
+      capped: ceilingHit,
       subrequests: { tmdb: tmdbCalls, kv: kvCalls, total: tmdbCalls + kvCalls },
       log,
       elapsedMs: Date.now() - startedAt,
@@ -565,7 +635,9 @@ async function loadOrBuildTasteProfile(watchlist, env, syncKey, note) {
   } else {
     note('Taste profile: no KV cache — building inline');
   }
-  const { profile, sample } = await buildTasteProfile(watchlist, env);
+  // Inline-Rebuild teilt sich die Invocation mit der Build-Pipeline →
+  // kleines Sample (Budget-Herleitung am TMDB_CALL_CEILING).
+  const { profile, sample } = await buildTasteProfile(watchlist, env, TASTE_SAMPLE_SIZE);
   await kvPut(
     env,
     tasteCacheKey(syncKey),
@@ -585,7 +657,9 @@ async function rebuildTasteProfileCache(env, syncKey) {
     console.log('Watchlist empty — skipping taste-profile rebuild');
     return;
   }
-  const { profile, sample } = await buildTasteProfile(watchlist, env);
+  // Prewarm/manueller Rebuild hat die Invocation fuer sich allein → 30er
+  // Sample (~33 Subrequests) statt 15: stabileres Profil, gleiche Wand.
+  const { profile, sample } = await buildTasteProfile(watchlist, env, TASTE_PREWARM_SAMPLE_SIZE);
   await kvPut(
     env,
     tasteCacheKey(syncKey),
@@ -594,10 +668,10 @@ async function rebuildTasteProfileCache(env, syncKey) {
   console.log(`Taste profile rebuilt and cached: genres=${Object.keys(profile.genres).length} decades=${Object.keys(profile.decades).length} cast=${Object.keys(profile.cast).length} sample=${sample.length}`);
 }
 
-async function buildTasteProfile(watchlist, env) {
+async function buildTasteProfile(watchlist, env, sampleSize = TASTE_SAMPLE_SIZE) {
   const samplePick = sampleRandom(
     watchlist.filter((it) => it.tmdbId),
-    TASTE_SAMPLE_SIZE,
+    sampleSize,
   );
 
   const details = await Promise.all(
@@ -620,9 +694,13 @@ async function buildTasteProfile(watchlist, env) {
 
   for (const { item, data } of details) {
     if (!data) continue;
+    // WL-22: Geschautes zaehlt doppelt — "watched" ist ein echtes
+    // Konsum-Signal, die blosse Vormerkung nur eine Absicht. Die Gewichtung
+    // muss VOR normalizeMap greifen (danach teilt das Maximum sie wieder raus).
+    const weight = item.watched ? 2 : 1;
     const genreIds = (data.genres || []).map((g) => g.id).filter(Boolean);
     for (const gid of genreIds) {
-      genreCounts.set(gid, (genreCounts.get(gid) || 0) + 1);
+      genreCounts.set(gid, (genreCounts.get(gid) || 0) + weight);
     }
     const dateField = (item.type === 'tv') ? 'first_air_date' : 'release_date';
     const dateStr = data[dateField] || '';
@@ -630,15 +708,17 @@ async function buildTasteProfile(watchlist, env) {
       const year = parseInt(dateStr.slice(0, 4), 10);
       if (!Number.isNaN(year)) {
         const decade = Math.floor(year / 10) * 10;
-        decadeCounts.set(decade, (decadeCounts.get(decade) || 0) + 1);
+        decadeCounts.set(decade, (decadeCounts.get(decade) || 0) + weight);
       }
     }
     if (typeof data.vote_average === 'number' && data.vote_average > 0) {
-      ratings.push(data.vote_average);
+      // Gleiche watched-Gewichtung wie bei den Zaehl-Achsen: avg_rating ist
+      // eine Taste-Achse wie Genre/Dekade/Cast (qa-Pass P2-4).
+      for (let i = 0; i < weight; i++) ratings.push(data.vote_average);
     }
     const cast = (data.credits && data.credits.cast) || [];
     for (const member of cast.slice(0, 5)) {
-      if (member.id) castCounts.set(member.id, (castCounts.get(member.id) || 0) + 1);
+      if (member.id) castCounts.set(member.id, (castCounts.get(member.id) || 0) + weight);
     }
     sample.push({
       title: data.title || data.name || item.title || 'Unknown',
@@ -694,15 +774,27 @@ function scoreWithTaste(item, taste) {
   const decade = Math.floor(releaseYear / 10) * 10;
   const dScore = taste.decades[decade] !== undefined ? taste.decades[decade] : 0.5;
 
+  // WL-22: fehlende Signale neutral behandeln statt als 0 bestrafen.
+  // Discover liefert nie cast_ids → das Cast-Gewicht wird auf die messbaren
+  // Achsen umverteilt (sonst ist base strukturell auf 0.8 gedeckelt und die
+  // 0.35-Schwelle wirkt haerter als entschieden). vote_average=0 heisst
+  // "keine Daten" (Demnaechst-Fall), nicht "schlechte Bewertung" → neutral 0.5.
   const cIds = item.cast_ids || [];
-  const cScore = cIds.length > 0
+  const hasCast = cIds.length > 0;
+  const cScore = hasCast
     ? Math.max(0, ...cIds.map((cid) => taste.cast[cid] || 0))
     : 0;
 
-  const rating = typeof item.vote_average === 'number' ? item.vote_average : 6.5;
-  const rScore = Math.max(0, 1 - Math.abs(rating - taste.avg_rating) / 5);
+  const rating = (typeof item.vote_average === 'number' && item.vote_average > 0)
+    ? item.vote_average
+    : null;
+  const rScore = rating === null
+    ? 0.5
+    : Math.max(0, 1 - Math.abs(rating - taste.avg_rating) / 5);
 
-  const base = 0.4 * gScore + 0.2 * dScore + 0.2 * cScore + 0.2 * rScore;
+  const base = hasCast
+    ? 0.4 * gScore + 0.2 * dScore + 0.2 * cScore + 0.2 * rScore
+    : 0.5 * gScore + 0.25 * dScore + 0.25 * rScore;
   const lang = (item.original_language || '').toLowerCase();
   const langFactor = PREFERRED_LANGUAGES.has(lang) ? 1.0 : NON_PREFERRED_LANG_FACTOR;
   return Math.round(base * langFactor * 1000) / 1000;
@@ -780,6 +872,38 @@ async function fetchWindowPage(mediaType, dateFrom, dateTo, page, voteCountGte, 
   return data.results.map((r) => normalizeDiscoverItem(r, mediaType));
 }
 
+// WL-22 Rubrik "entdeckt": Katalog-Discover ohne Datumsfenster auf die Top-3
+// Taste-Genres. `with_genres` mit `|` = OR (Komma waere AND und liefert fast
+// nichts); Provider-Filter wirkt nur zusammen mit watch_region=DE. Die Seite
+// rotiert taeglich ueber CATALOG_PAGE_SPAN, damit der Pool ~5x breiter ist
+// als eine statische Top-Seite (Scoring sortiert ohnehin neu).
+async function fetchCatalogWindow(topGenreIds, env) {
+  const page = (Math.floor(Date.now() / 86400000) % CATALOG_PAGE_SPAN) + 1;
+  const tasks = ['movie', 'tv'].map((mediaType) =>
+    tmdbGet(`discover/${mediaType}`, {
+      sort_by: 'vote_average.desc',
+      'vote_count.gte': CATALOG_MIN_VOTES,
+      'vote_average.gte': CATALOG_MIN_RATING,
+      with_genres: topGenreIds.join('|'),
+      watch_region: 'DE',
+      with_watch_providers: PROVIDER_IDS_STR,
+      with_watch_monetization_types: 'flatrate|free|ads',
+      page,
+    }, env).then((data) =>
+      (data && Array.isArray(data.results) ? data.results : [])
+        .map((r) => normalizeDiscoverItem(r, mediaType))),
+  );
+  const pages = await Promise.all(tasks);
+  const seen = new Map();
+  for (const list of pages) {
+    for (const it of list) {
+      const k = itemKey(it);
+      if (!seen.has(k)) seen.set(k, it);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 function normalizeDiscoverItem(r, mediaType) {
   return {
     tmdb_id: r.id,
@@ -808,20 +932,23 @@ function scoreAndFilter(items, taste, watchlistIds, seenState, opts = {}) {
   const today = new Date();
   const todayStr = isoDate(today);
   const scored = [];
+  // WL-22 Kill-Counter: erst messen, woran Kandidaten sterben — jede weitere
+  // Schrauben-Drehung (Stufe 2: Seen-Politik, Schwellen) braucht diese Zahlen.
+  const kills = { watchlist: 0, seen: 0, lowVotes: 0, lowRating: 0, belowTaste: 0, kept: 0 };
 
   for (const it of items) {
     const key = itemKey(it);
-    if (watchlistIds.has(key)) continue;
-    if (seenState[key]) continue;
+    if (watchlistIds.has(key)) { kills.watchlist++; continue; }
+    if (seenState[key]) { kills.seen++; continue; }
 
     // Upcoming titles legitimately have few votes — relax for "Demnaechst",
     // but require a minimum popularity so true long-tail noise stays out.
-    if (!relaxVotes && it.vote_count < 5) continue;
-    if (relaxVotes && it.vote_count < 5 && (it.popularity || 0) < 15) continue;
-    if (it.vote_average < MIN_RATING && it.vote_count >= MIN_VOTES) continue;
+    if (!relaxVotes && it.vote_count < 5) { kills.lowVotes++; continue; }
+    if (relaxVotes && it.vote_count < 5 && (it.popularity || 0) < 15) { kills.lowVotes++; continue; }
+    if (it.vote_average < MIN_RATING && it.vote_count >= MIN_VOTES) { kills.lowRating++; continue; }
 
     const taste_score = scoreWithTaste(it, taste);
-    if (taste_score < MEDIUM_THRESHOLD) continue;
+    if (taste_score < MEDIUM_THRESHOLD) { kills.belowTaste++; continue; }
 
     const popularity = it.popularity || 0;
     let recencyBoost = 1.0;
@@ -835,6 +962,7 @@ function scoreAndFilter(items, taste, watchlistIds, seenState, opts = {}) {
     const isUpcoming = it.release_date && it.release_date > todayStr;
     const rankScore = (Math.log10(Math.max(popularity, 1)) * 2 + it.vote_average + taste_score * 5) * recencyBoost;
 
+    kills.kept++;
     scored.push({
       ...it,
       key,
@@ -845,7 +973,7 @@ function scoreAndFilter(items, taste, watchlistIds, seenState, opts = {}) {
   }
 
   scored.sort((a, b) => b.rank_score - a.rank_score);
-  return scored;
+  return { list: scored, kills };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -853,16 +981,20 @@ function scoreAndFilter(items, taste, watchlistIds, seenState, opts = {}) {
 // (append_to_response=credits,watch/providers), hard-capped.
 // ─────────────────────────────────────────────────────────────────────────
 
-async function enrichMagazineItems(scored, limit, { requireProviders }, taste, tasteSample, env, note) {
+async function enrichMagazineItems(scored, limit, { requireProviders, reasonPrefix }, taste, tasteSample, env, note) {
   const out = [];
   let detailCalls = 0;
   for (const c of scored) {
     if (out.length >= limit) break;
     if (detailCalls >= MAGAZINE_ENRICH_CAP) {
+      // Auch der Per-Sektion-Cap ist eine Budget-Kappung der Ausbeute —
+      // ohne das Flag meldete der Response hier `capped: false` (qa-Pass P2-3).
+      ceilingHit = true;
       note(`Enrich cap reached (${MAGAZINE_ENRICH_CAP}) — stopping`);
       break;
     }
     if (tmdbCalls >= TMDB_CALL_CEILING) {
+      ceilingHit = true;
       note(`TMDB call ceiling reached (${TMDB_CALL_CEILING}) — stopping enrichment`);
       break;
     }
@@ -998,7 +1130,10 @@ async function enrichMagazineItems(scored, limit, { requireProviders }, taste, t
       overview: data.overview || c.overview || '',
       poster_path: data.poster_path || c.poster_path,
       backdrop_path: data.backdrop_path || c.backdrop_path,
-      reason: buildReason(c, taste, castList),
+      // WL-22: die App rendert `reason` in der "Warum es zu dir passt"-Box —
+      // der Praefix ist die einzige Stelle, an der die Katalog-Herkunft
+      // sichtbar wird (die App kennt keine Sektions-Header).
+      reason: (reasonPrefix || '') + buildReason(c, taste, castList),
       fan_of: pickFanOf(c, tasteSample),
     });
   }
