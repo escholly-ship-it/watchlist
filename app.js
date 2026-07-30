@@ -1461,6 +1461,16 @@ function renderMagazineTeaser() {
 
   const neu = (magazine.counts && magazine.counts.neu) || 0;
   const dem = (magazine.counts && magazine.counts.demnaechst) || 0;
+  // WL-22: dritte Rubrik "entdeckt" (Katalog-Empfehlungen). Ohne sie zeigt der
+  // Teaser bei neu=0 "0 neue Titel", obwohl die Ausgabe gefuellt ist.
+  const ent = (magazine.counts && magazine.counts.entdeckt) || 0;
+  const subParts = [];
+  if (neu) subParts.push(neu === 1 ? '1 neuer Titel' : `${neu} neue Titel`);
+  if (dem) subParts.push(dem === 1 ? '1 Ausblick' : `${dem} Ausblicke`);
+  if (ent) subParts.push(ent === 1 ? '1 Entdeckung' : `${ent} Entdeckungen`);
+  const sub = subParts.length > 0
+    ? `${subParts.join(' · ')}, kuratiert für deinen Geschmack`
+    : `${all.length} Titel, kuratiert für deinen Geschmack`;
   const week = magazine.issue ? magazine.issue.week : '';
   $teaser.innerHTML = `
     <div class="mag-teaser-card" id="magTeaserCard" role="button" tabindex="0" aria-label="Wochen-Magazin öffnen">
@@ -1469,7 +1479,7 @@ function renderMagazineTeaser() {
         <span class="mag-teaser-issue">Nr. ${esc(String(week))} · ${esc(formatIssueDate(magazine.issue && magazine.issue.date))}</span>
       </div>
       <p class="mag-teaser-title">Dein Wochen-Magazin</p>
-      <p class="mag-teaser-sub">${neu} neue Titel${dem ? ` · ${dem} Ausblicke` : ''}, kuratiert für deinen Geschmack</p>
+      <p class="mag-teaser-sub">${sub}</p>
       <div class="mag-teaser-thumbs">${thumbs}</div>
       <button class="mag-teaser-btn">Magazin lesen</button>
     </div>`;
