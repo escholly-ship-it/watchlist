@@ -90,6 +90,48 @@ function svcLogoFallback(img) {
   img.replaceWith(badge);
 }
 
+// WL-25: Inline-Logo NEBEN dem Namen (dekorativ — der Name traegt die
+// Information, daher alt="" + aria-hidden). Eine Quelle fuer alle Flaechen:
+// Filter-Chips, Detail-Badge, "Im Abo verfuegbar", Add-Flow.
+function svcInlineLogoHtml(svc, cls = '') {
+  if (!svc || !svc.logo) return '';
+  return `<img class="svc-inline-logo${cls ? ' ' + cls : ''}" src="${tmdbPoster(svc.logo, 'w92')}" alt="" aria-hidden="true" data-svc="${svc.id}" onerror="svcInlineLogoFallback(this)">`;
+}
+
+// WL-25: stellt bei Ladefehler den Vor-Logo-Zustand AKTIV wieder her —
+// der Chip bekommt seinen Marken-Punkt zurueck (has-logo weg), die
+// Detail-Badges ihre Markenfarben (with-logo weg + Inline-Style, Nicht-
+// Current behaelt seine 0.7-Deckkraft via is-current-Marker), der
+// service-btn braucht nur die img-Entfernung (Name + --svc-color bleiben).
+function svcInlineLogoFallback(img) {
+  const svc = SERVICES.find(s => s.id === img.dataset.svc);
+  const host = img.closest('.service-chip, .detail-service-badge, .detail-provider-badge, .service-btn');
+  if (host && svc) {
+    if (host.classList.contains('service-chip')) {
+      host.classList.remove('has-logo');
+    } else if (host.classList.contains('detail-service-badge') || host.classList.contains('detail-provider-badge')) {
+      host.classList.remove('with-logo');
+      host.style.background = svc.color;
+      if (host.classList.contains('detail-provider-badge') && !host.classList.contains('is-current')) {
+        host.style.opacity = '0.7';
+      } else {
+        host.style.color = badgeTextColor(svc.color);
+      }
+    }
+  }
+  img.remove();
+}
+
+// WL-25: eine Quelle fuer das Detail-Anbieter-Badge (Erst-Render UND
+// Promote-Update) — mit Logo neutrale Pille, ohne Logo (heute unerreichbar,
+// Vorsorge) die bisherige Farb-Pille.
+function detailServiceBadgeHtml(svc) {
+  if (!svc) return '';
+  return svc.logo
+    ? `<div class="detail-service-badge with-logo">${svcInlineLogoHtml(svc, 'lg')}${esc(svc.name)}</div>`
+    : `<div class="detail-service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>`;
+}
+
 // Build reverse lookup: tmdbProviderId -> serviceId
 const PROVIDER_MAP = {};
 SERVICES.forEach(svc => {
@@ -881,7 +923,15 @@ function renderFilterBar() {
     chip.dataset.service = svc.id;
     chip.style.setProperty('--chip-color', svc.color);
     chip.style.setProperty('--chip-text', badgeTextColor(svc.color));
-    chip.textContent = svc.name;
+    // WL-25: Logo + Name (Namens-span statt textContent; Logo via derselben
+    // Helfer-Quelle). Ohne logo-Feld bleibt der heutige Punkt+Text-Chip.
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = svc.name;
+    chip.appendChild(nameSpan);
+    if (svc.logo) {
+      chip.classList.add('has-logo');
+      chip.insertAdjacentHTML('afterbegin', svcInlineLogoHtml(svc));
+    }
     if (activeService === svc.id) chip.classList.add('active');
     $filterBar.insertBefore(chip, sortDivider);
   });
@@ -1098,7 +1148,7 @@ function renderServiceGrid(available) {
     else if (!isAvail && allAvailable.size > 0) classes.push('unavailable');
 
     return `<button class="${classes.join(' ')}" data-service="${svc.id}" style="--svc-color:${svc.color}">
-      ${svc.name}
+      ${svcInlineLogoHtml(svc)}<span>${esc(svc.name)}</span>
     </button>`;
   }).join('');
 
@@ -1248,7 +1298,7 @@ async function openDetail(item) {
   $closeBtn.onclick = closeDetailModal;
 
   $content.innerHTML = `
-    ${svc ? `<div class="detail-service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>` : ''}
+    ${detailServiceBadgeHtml(svc)}
     <h2 class="detail-title" id="detailModalTitle">${esc(item.title)}</h2>
     <div class="detail-meta">
       ${ratingPct ? `<span class="detail-match">${ratingPct}% Match</span>` : ''}
@@ -1330,16 +1380,13 @@ async function openDetail(item) {
   if (tryPromote(item, providers)) {
     svc = SERVICES.find(s => s.id === item.serviceId);
     saveItems();
-    let $hb = $content.querySelector('.detail-service-badge');
-    if (!$hb && svc) {
-      $hb = document.createElement('div');
-      $hb.className = 'detail-service-badge';
-      $content.insertBefore($hb, $content.firstChild);
-    }
-    if ($hb && svc) {
-      $hb.style.background = svc.color;
-      $hb.style.color = badgeTextColor(svc.color);
-      $hb.textContent = svc.name;
+    // WL-25: beide Zweige nutzen dieselbe Badge-Quelle wie der Erst-Render —
+    // im Promote-Fall existiert praktisch nie ein Badge (Item war vorgemerkt),
+    // der Einfuege-Zweig ist der Regelfall.
+    const $hb = $content.querySelector('.detail-service-badge');
+    if (svc) {
+      if ($hb) $hb.outerHTML = detailServiceBadgeHtml(svc);
+      else $content.insertAdjacentHTML('afterbegin', detailServiceBadgeHtml(svc));
     }
     renderFilterBar();
     renderWatchlist();
@@ -1363,10 +1410,18 @@ async function openDetail(item) {
       const s = SERVICES.find(x => x.id === svcId);
       if (s) {
         const isCurrent = svcId === item.serviceId;
-        // isCurrent: solides Badge -> WCAG-1.4.3-konforme Textfarbe mitgeben.
-        // Nicht-current: opacity:0.7 = bewusst inaktiver Zustand (WCAG-1.4.3-Ausnahme), Optik unveraendert.
-        const provColor = isCurrent ? `;color:${badgeTextColor(s.color)}` : ';opacity:0.7';
-        providerHtml += `<div class="detail-provider-badge" style="background:${s.color}${provColor}">${esc(s.name)}</div>`;
+        if (s.logo) {
+          // WL-25: neutrale Mini-Chips mit Kachel + Name; is-current als
+          // DOM-Marker, damit der Logo-Fallback die Deckkraft korrekt
+          // restaurieren kann. Nicht-current dimmt via CSS auf 0.7.
+          providerHtml += `<div class="detail-provider-badge with-logo${isCurrent ? ' is-current' : ''}">${svcInlineLogoHtml(s)}${esc(s.name)}</div>`;
+        } else {
+          // Vorsorge-Zweig (heute unerreichbar, alle 12 Dienste tragen ein Logo):
+          // isCurrent: solides Badge -> WCAG-1.4.3-konforme Textfarbe mitgeben.
+          // Nicht-current: opacity:0.7 = bewusst inaktiver Zustand (WCAG-1.4.3-Ausnahme).
+          const provColor = isCurrent ? `;color:${badgeTextColor(s.color)}` : ';opacity:0.7';
+          providerHtml += `<div class="detail-provider-badge${isCurrent ? ' is-current' : ''}" style="background:${s.color}${provColor}">${esc(s.name)}</div>`;
+        }
       }
     });
     providerHtml += '</div>';
