@@ -1148,7 +1148,7 @@ function renderServiceGrid(available) {
     else if (!isAvail && allAvailable.size > 0) classes.push('unavailable');
 
     return `<button class="${classes.join(' ')}" data-service="${svc.id}" style="--svc-color:${svc.color}">
-      ${svcInlineLogoHtml(svc)}<span>${svc.name}</span>
+      ${svcInlineLogoHtml(svc)}<span>${esc(svc.name)}</span>
     </button>`;
   }).join('');
 

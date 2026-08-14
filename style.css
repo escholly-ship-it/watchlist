@@ -2043,6 +2043,11 @@ body.mag-open { overflow: hidden; }
   align-items: center;
   gap: 7px;
   padding-left: 8px;
+  /* Mockup-Vorlage: normale Schreibweise neben der Kachel (Typ-Chips sind
+     ohnehin normal gesetzt — das Sheet wird damit einheitlicher) */
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-xs);
 }
 .filter-chip.service-chip.has-logo::before { display: none; }
 .filter-chip.service-chip.has-logo.active {
@@ -2056,6 +2061,7 @@ body.mag-open { overflow: hidden; }
    Textfarbe explizit (Basisregel sagt white), normale Schreibweise neben
    der Kachel. */
 .detail-service-badge.with-logo {
+  box-shadow: none; /* Basis-Schatten war fuer die Markenpille; neutrale Pille liegt flach wie die Provider-Chips */
   display: inline-flex;
   align-items: center;
   gap: 8px;
