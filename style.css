@@ -718,6 +718,18 @@ body {
 }
 
 /* Service Badge — Pill auf Poster */
+/* WL-24: Anbieter-Logo-Kachel — ein Mass, ein Radius, ein Schatten, ueberall */
+.service-logo {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
 .service-badge {
   position: absolute;
   top: 6px;
