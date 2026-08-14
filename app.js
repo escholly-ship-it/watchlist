@@ -46,20 +46,49 @@ if (SYNC_KEY) {
 }
 
 // ---- Streaming Services with TMDB provider IDs ----
+// WL-24 (2026-08-14): logo = TMDB logo_path (Quelle /watch/providers, Region DE,
+// gemessen 2026-08-14). Sky zeigt bewusst das Sky-Go-Logo (Customer hat Sky Go;
+// die Erkennung fasst WOW=30 + Sky Go=29 weiter unter 'sky' zusammen).
+// RTL: [2750] ist die heutige RTL+-ID (Gratis-Stufe traegt dieselbe ID via
+// ads-Merge); die frueheren 298/1771 sind stale — 1771 gehoert heute Takflix
+// (Falsch-Positiv-Risiko). Amazon-Channel-Varianten bewusst nicht gemappt.
 const SERVICES = [
-  { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8] },
-  { id: 'prime',     name: 'Prime Video', color: '#00a8e1', tmdbIds: [9, 119] },
-  { id: 'disney',    name: 'Disney+',     color: '#113ccf', tmdbIds: [337] },
-  { id: 'apple',     name: 'Apple TV+',   color: '#555',    tmdbIds: [350] },
-  { id: 'sky',       name: 'Sky',         color: '#002f5f', tmdbIds: [30, 1773, 29] },
-  { id: 'hbo',       name: 'HBO Max',     color: '#b91ad1', tmdbIds: [384, 1899] },
-  { id: 'paramount', name: 'Paramount+',  color: '#0064ff', tmdbIds: [531] },
-  { id: 'magenta',   name: 'Magenta TV',  color: '#e20074', tmdbIds: [178] },
-  { id: 'joyn',      name: 'Joyn',        color: '#169b62', tmdbIds: [304, 421] },
-  { id: 'ard',       name: 'ARD',         color: '#004e8a', tmdbIds: [219] },
-  { id: 'zdf',       name: 'ZDF',         color: '#fa7d19', tmdbIds: [537, 536] },
-  { id: 'rtl',       name: 'RTL+',        color: '#e3001b', tmdbIds: [298, 1771] },
+  { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8],            logo: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
+  { id: 'prime',     name: 'Prime Video', color: '#00a8e1', tmdbIds: [9, 119],       logo: '/pvske1MyAoymrs5bguRfVqYiM9a.jpg' },
+  { id: 'disney',    name: 'Disney+',     color: '#113ccf', tmdbIds: [337],          logo: '/97yvRBw1GzX7fXprcF80er19ot.jpg' },
+  { id: 'apple',     name: 'Apple TV+',   color: '#555',    tmdbIds: [350],          logo: '/mcbz1LgtErU9p4UdbZ0rG6RTWHX.jpg' },
+  { id: 'sky',       name: 'Sky',         color: '#002f5f', tmdbIds: [30, 1773, 29], logo: '/vDdk3LyjWkYlfCtkrhkjFKFK1Hg.jpg' },
+  { id: 'hbo',       name: 'HBO Max',     color: '#b91ad1', tmdbIds: [384, 1899],    logo: '/jbe4gVSfRlbPTdESXhEKpornsfu.jpg' },
+  { id: 'paramount', name: 'Paramount+',  color: '#0064ff', tmdbIds: [531],          logo: '/h5DcR0J2EESLitnhR8xLG1QymTE.jpg' },
+  { id: 'magenta',   name: 'Magenta TV',  color: '#e20074', tmdbIds: [178],          logo: '/nCsFBTEmlCMc5NA4fwPuluTz6AO.jpg' },
+  { id: 'joyn',      name: 'Joyn',        color: '#169b62', tmdbIds: [304, 421],     logo: '/3tKojIkk9QpkDUeU8HgpHQ9Jb2v.jpg' },
+  { id: 'ard',       name: 'ARD',         color: '#004e8a', tmdbIds: [219],          logo: '/avItehPq07h5nKCJgwNTxl6OD0y.jpg' },
+  { id: 'zdf',       name: 'ZDF',         color: '#fa7d19', tmdbIds: [537, 536],     logo: '/ugus0p8BGGhE8sxhwAjJz2o8jyy.jpg' },
+  { id: 'rtl',       name: 'RTL+',        color: '#e3001b', tmdbIds: [2750],         logo: '/acZuR8b9gDqMQnNFoNn82NYk72X.jpg' },
 ];
+
+// WL-24: eine Quelle fuer den Anbieter-Marker auf Karten — Logo-Kachel,
+// bei fehlendem Logo direkt der Text-Badge.
+function svcMarkerHtml(svc) {
+  if (!svc) return '';
+  if (svc.logo) {
+    return `<img class="service-logo" src="${tmdbPoster(svc.logo, 'w92')}" alt="${escAttr(svc.name)}" data-svc="${svc.id}" onerror="svcLogoFallback(this)">`;
+  }
+  return `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>`;
+}
+
+// WL-24: laedt ein Logo nicht (CDN-Ausfall/offline-Cache), ersetzt der
+// Fallback das Bild durch den netzlosen Text-Badge — nie ein Bruchbild.
+function svcLogoFallback(img) {
+  const svc = SERVICES.find(s => s.id === img.dataset.svc);
+  if (!svc) { img.remove(); return; }
+  const badge = document.createElement('div');
+  badge.className = 'service-badge';
+  badge.style.background = svc.color;
+  badge.style.color = badgeTextColor(svc.color);
+  badge.textContent = svc.name;
+  img.replaceWith(badge);
+}
 
 // Build reverse lookup: tmdbProviderId -> serviceId
 const PROVIDER_MAP = {};
@@ -503,7 +532,7 @@ function renderShortlist() {
         ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${escAttr(item.title)}" loading="lazy">`
         : `<div class="shortlist-no-poster">🎬</div>`
       }
-      ${svc ? `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>` : ''}
+      ${svcMarkerHtml(svc)}
       <button class="shortlist-remove" aria-label="Entfernen">×</button>
       <div class="shortlist-overlay">
         <div class="shortlist-card-title">${esc(item.title)}</div>
@@ -1006,7 +1035,7 @@ function createCard(item) {
       </div>
     </div>
     ${svc
-      ? `<div class="service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>`
+      ? svcMarkerHtml(svc)
       : (item.serviceId == null ? `<div class="card-badge-vorgemerkt">${vorgemerktBadgeText(item)}</div>` : '')}
   `;
 
