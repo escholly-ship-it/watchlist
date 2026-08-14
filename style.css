@@ -441,6 +441,18 @@ body {
   scroll-snap-align: start; /* REQ-P3-I */
 }
 
+/* Desktop-Skalierung (768/1024, Grid-Breakpoints) — die feste Breite je
+   Breakpoint bleibt Pflicht: overflow-x + scroll-snap brauchen sie.
+   Achtung Doppelpflege: das sizes-Attribut in renderShortlist() (app.js)
+   spiegelt diese Breiten — Aenderung hier zieht dort nach. */
+@media (min-width: 768px) {
+  .shortlist-card { width: 120px; }
+}
+
+@media (min-width: 1024px) {
+  .shortlist-card { width: 140px; }
+}
+
 .shortlist-card:active {
   cursor: grabbing;
 }
