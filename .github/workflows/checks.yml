@@ -1,0 +1,16 @@
+name: checks
+
+on:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JS-Syntax (app.js + worker)
+        run: |
+          node --check app.js
+          if [ -f worker/index.js ]; then node --check worker/index.js; fi
+      - name: manifest.json valide
+        run: python3 -c "import json; json.load(open('manifest.json'))"
