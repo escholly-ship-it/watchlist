@@ -11,6 +11,6 @@ jobs:
       - name: JS-Syntax (app.js + worker)
         run: |
           node --check app.js
-          if [ -f worker/index.js ]; then node --check worker/index.js; fi
+          node --check worker/src/index.js
       - name: manifest.json valide
         run: python3 -c "import json; json.load(open('manifest.json'))"

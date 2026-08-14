@@ -1976,9 +1976,8 @@ async function addRecommendationFromMagazine(rec) {
 
 const $magClose = document.getElementById('magazineClose');
 if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMagazineReader();
-});
+// WL-23: der fruehere Modul-Level-Escape-Listener ist gestrichen — Escape
+// laeuft zentral ueber die Kette in bindEvents (oberstes Overlay zuerst).
 
 const $magAddBtn = document.getElementById('magazineAddBtn');
 if ($magAddBtn) {

@@ -788,12 +788,18 @@ body {
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s;
+  /* WL-23: visibility nimmt geschlossene Overlays aus der Tab-Reihenfolge —
+     die Primaer-Filter leben jetzt im Sheet und waeren sonst unsichtbare
+     Tab-Stopps. Delay haelt die Ausblende-Transition sichtbar. */
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0s 0.2s;
 }
 
 .modal-overlay.open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.2s;
 }
 
 .modal {
