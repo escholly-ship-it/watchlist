@@ -569,9 +569,14 @@ function renderShortlist() {
 
     const svc = SERVICES.find(s => s.id === item.serviceId);
 
+    // sizes spiegelt die .shortlist-card-Breiten aus style.css (100/120/140,
+    // Breakpoints 768/1024) — bei Breiten-Aenderung dort BEIDE Orte anfassen.
+    // Der echte Bild-Slot ist wegen 2px border je 4px schmaler; kippt die
+    // Kandidatenwahl nicht (nachgerechnet DPR 1 + 2), deshalb bewusst die
+    // CSS-Werte statt der Slot-Werte.
     card.innerHTML = `
       ${item.poster
-        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" alt="${escAttr(item.title)}" loading="lazy">`
+        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" srcset="${tmdbPoster(item.poster, 'w185')} 185w, ${tmdbPoster(item.poster, 'w342')} 342w" sizes="(min-width: 1024px) 140px, (min-width: 768px) 120px, 100px" alt="${escAttr(item.title)}" loading="lazy">`
         : `<div class="shortlist-no-poster">🎬</div>`
       }
       ${svcMarkerHtml(svc)}
