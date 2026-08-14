@@ -63,23 +63,17 @@
       </button>
     </header>
 
-    <!-- Filter Bar (Wrap = sticky + Fade-Affordanz, innerer #filterBar scrollt) -->
-    <div class="filter-bar-wrap">
-      <div class="filter-bar" id="filterBar">
-        <button class="filter-chip active" data-filter="all">Alle</button>
-        <button class="filter-chip" data-filter="movie">Filme</button>
-        <button class="filter-chip" data-filter="tv">Serien</button>
-        <div class="filter-divider service-divider hidden"></div>
-        <!-- Service filters werden vor .sort-divider injiziert (REQ-P2-Q) -->
-        <div class="filter-divider sort-divider"></div>
-        <button class="filter-chip sort-chip active" data-sort="added">Neu</button>
-        <button class="filter-chip sort-chip" data-sort="rating">Bewertung</button>
-        <button class="filter-chip sort-chip" data-sort="alpha">A–Z</button>
-      </div>
+    <!-- Kompakt-Kopf (WL-23): Filter + Woche als Pillen; Chips im Sheet, Teaser im Overlay -->
+    <div class="pill-row" id="pillRow">
+      <button class="pill" id="pillFilter" aria-haspopup="dialog">
+        <span class="pill-label">Filter</span>
+        <span class="pill-value" id="pillFilterValue">Alle · Neu</span>
+      </button>
+      <button class="pill pill-accent hidden" id="pillWoche" aria-haspopup="dialog">
+        <span class="pill-label" id="pillWocheLabel">Woche</span>
+        <span class="pill-value" id="pillWocheValue"></span>
+      </button>
     </div>
-
-    <!-- Wochen-Magazin Teaser (WL-5) -->
-    <section class="magazine-teaser hidden" id="magazineTeaser"></section>
 
     <!-- Shortlist -->
     <section class="shortlist-section hidden" id="shortlistSection">
@@ -87,7 +81,7 @@
       <div class="shortlist-track" id="shortlistTrack"></div>
     </section>
 
-    <!-- Main Content: Watchlist -->
+    <!-- Main Content: Watchlist (nur offene Titel, WL-23) -->
     <main class="watchlist" id="watchlist">
       <div class="empty-state" id="emptyState">
         <div class="empty-icon">🎬</div>
@@ -95,6 +89,52 @@
         <p class="empty-sub">Tippe auf <strong>+</strong> um Filme und Serien hinzuzufügen</p>
       </div>
     </main>
+
+    <!-- Gesehen (WL-23): gesammelt hinter einer Leiste, eingeklappt per Default -->
+    <section class="seen-section hidden" id="seenSection">
+      <button class="seen-bar" id="seenBar" aria-expanded="false" aria-controls="seenGrid">
+        <span class="seen-label">Gesehen</span>
+        <span class="seen-count" id="seenCount"></span>
+        <svg class="seen-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="watchlist seen-grid hidden" id="seenGrid"></div>
+    </section>
+
+    <!-- Filter-Sheet (WL-23): traegt die bisherige Chip-Reihe -->
+    <div class="modal-overlay sheet" id="filterModal" role="dialog" aria-modal="true" aria-labelledby="filterModalTitle">
+      <div class="modal filter-sheet">
+        <div class="modal-header">
+          <h2 id="filterModalTitle">Filter</h2>
+          <button class="modal-close" id="filterClose" aria-label="Schließen">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="filter-bar" id="filterBar">
+          <button class="filter-chip active" data-filter="all">Alle</button>
+          <button class="filter-chip" data-filter="movie">Filme</button>
+          <button class="filter-chip" data-filter="tv">Serien</button>
+          <div class="filter-divider service-divider hidden"></div>
+          <!-- Service filters werden vor .sort-divider injiziert (REQ-P2-Q) -->
+          <div class="filter-divider sort-divider"></div>
+          <button class="filter-chip sort-chip active" data-sort="added">Neu</button>
+          <button class="filter-chip sort-chip" data-sort="rating">Bewertung</button>
+          <button class="filter-chip sort-chip" data-sort="alpha">A–Z</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Magazin-Overlay (WL-23): Teaser on-demand gerendert -->
+    <div class="modal-overlay" id="magazineModal" role="dialog" aria-modal="true" aria-labelledby="magazineModalTitle">
+      <div class="modal magazine-modal">
+        <div class="modal-header">
+          <h2 id="magazineModalTitle">Dein Wochen-Magazin</h2>
+          <button class="modal-close" id="magazineModalClose" aria-label="Schließen">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="magazineModalBody"></div>
+      </div>
+    </div>
 
     <!-- Add Modal -->
     <div class="modal-overlay" id="addModal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">

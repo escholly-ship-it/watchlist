@@ -201,32 +201,67 @@ body {
 }
 
 /* ---- Filter Bar ---- */
-/* Wrap = sticky + opake Positionierungs-Schicht; .filter-bar selbst scrollt.
-   So pinnen die Fade-Kanten (REQ-P2-P) am sichtbaren Rand statt mit dem Inhalt
-   wegzuscrollen — und nichts blitzt beim Vertikal-Scroll durch (Wrap ist opak). */
-.filter-bar-wrap {
+/* ---- WL-23 Kompakt-Kopf: Pill-Reihe uebernimmt den Sticky-Slot der frueheren
+   .filter-bar-wrap; die Chip-Reihe lebt im Filter-Sheet und wrappt dort
+   viewport-unabhaengig (Fade-Affordanz ersatzlos entfallen). ---- */
+.pill-row {
   position: sticky;
   top: var(--header-h);
   z-index: 90;
   background: var(--surface-1);
+  display: flex;
+  gap: var(--space-2);
+  padding-block: var(--space-2) var(--space-3);
+  padding-inline: var(--content-pad);
 }
 
-.filter-bar-wrap::before,
-.filter-bar-wrap::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 32px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-  z-index: 1;
+.pill {
+  flex: 1;
+  min-height: 44px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--ghost);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  font-family: inherit;
 }
-.filter-bar-wrap::before { left: 0; background: linear-gradient(to right, var(--surface-1), transparent); }
-.filter-bar-wrap::after { right: 0; background: linear-gradient(to left, var(--surface-1), transparent); }
-.filter-bar-wrap.fade-left::before { opacity: 1; }
-.filter-bar-wrap.fade-right::after { opacity: 1; }
+
+.pill:hover { background: var(--surface-4); }
+
+.pill-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.pill-value {
+  color: var(--text-dim);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Abweichung vom Default (Alle · Neu) sichtbar machen */
+.pill.pill-active {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.pill.pill-active .pill-value { color: var(--primary-light); }
+
+/* Woche-Pille: Akzent wie die Streaming-Woche im alten Teaser */
+.pill-accent { border-color: rgba(77, 142, 255, 0.35); }
+.pill-accent .pill-label { color: var(--primary); }
 
 .filter-bar {
   display: flex;
@@ -240,11 +275,33 @@ body {
 
 .filter-bar::-webkit-scrollbar { display: none; }
 
+/* WL-23 Gate-Auflage: im Sheet wrappt die Bar auf ALLEN Breiten (die
+   Basis-Regel wrappt erst ab 768px) — erst damit tragen die Gruppen-Umbrueche
+   und der Wegfall der Fades auch auf 375/414 px. */
+.filter-sheet .filter-bar {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  padding: 4px 20px calc(var(--safe-bottom) + 24px);
+}
+
+/* Divider werden im Sheet zu Gruppen-Umbruechen mit Label */
+.filter-sheet .filter-divider {
+  flex-basis: 100%;
+  width: auto;
+  background: none;
+  margin: 10px 0 0;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+.filter-sheet .service-divider::before { content: 'Dienst'; }
+.filter-sheet .sort-divider::before { content: 'Sortierung'; }
+
 /* REQ-P2-P: breit -> umbrechen statt scrollen (alle Chips ohne Indikator sichtbar) */
 @media (min-width: 768px) {
   .filter-bar { flex-wrap: wrap; overflow-x: visible; }
-  .filter-bar-wrap.fade-left::before,
-  .filter-bar-wrap.fade-right::after { opacity: 0; }
 }
 
 .filter-chip {
@@ -731,12 +788,18 @@ body {
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s;
+  /* WL-23: visibility nimmt geschlossene Overlays aus der Tab-Reihenfolge —
+     die Primaer-Filter leben jetzt im Sheet und waeren sonst unsichtbare
+     Tab-Stopps. Delay haelt die Ausblende-Transition sichtbar. */
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0s 0.2s;
 }
 
 .modal-overlay.open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.2s;
 }
 
 .modal {
@@ -1346,17 +1409,21 @@ body {
    WOCHEN-MAGAZIN (WL-5)
    ============================================ */
 
-/* ---- Teaser-Karte ---- */
-.magazine-teaser {
-  padding-inline: var(--content-pad);
-  margin-bottom: 20px;
-}
+/* ---- Teaser-Karte (WL-23: lebt im Magazin-Overlay, nicht mehr im Fluss) ---- */
 .mag-teaser-card {
   background: var(--surface-3);
   border: 1px solid var(--surface-5);
   border-radius: var(--radius-card);
   padding: 18px;
   cursor: pointer;
+}
+/* Im Overlay: Modal traegt schon Flaeche + Kopf — Karte wird unsichtbare Huelle */
+.mag-teaser-card.in-modal {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0 20px calc(var(--safe-bottom) + 20px);
+  cursor: default;
 }
 .mag-teaser-head {
   display: flex;
@@ -1873,4 +1940,67 @@ body.mag-open { overflow: hidden; }
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ============================================
+   WL-23 — Sheet, Gesehen-Sektion
+   ============================================ */
+
+/* Filter-Sheet bleibt auf ALLEN Viewports unten angedockt — die 600px-Query
+   am gemeinsamen .modal-overlay (zentriert) gilt hier bewusst nicht. */
+.modal-overlay.sheet {
+  align-items: flex-end;
+  justify-content: center;
+}
+.modal-overlay.sheet .modal {
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+}
+
+/* ---- Gesehen (eingeklappt per Default) ---- */
+.seen-section {
+  padding: 0 var(--content-pad) calc(var(--safe-bottom) + 24px);
+}
+
+.seen-bar {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--ghost);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-family: inherit;
+}
+
+.seen-bar:hover { background: var(--surface-4); }
+
+.seen-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+
+.seen-count {
+  color: var(--text-dim);
+  font-weight: 500;
+  flex: 1;
+  text-align: left;
+}
+
+.seen-chev {
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+.seen-bar.open .seen-chev { transform: rotate(180deg); }
+
+/* Raster erbt .watchlist (3 Spalten); nur Abstand zur Leiste */
+.seen-grid {
+  padding: 12px 0 0;
 }

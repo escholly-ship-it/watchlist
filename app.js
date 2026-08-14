@@ -111,6 +111,34 @@ const $shortlistSection = document.getElementById('shortlistSection');
 const $shortlistTrack = document.getElementById('shortlistTrack');
 const $emptyState = document.getElementById('emptyState');
 const $filterBar = document.getElementById('filterBar');
+// WL-23 Kompakt-Kopf
+const $pillFilter = document.getElementById('pillFilter');
+const $pillFilterValue = document.getElementById('pillFilterValue');
+const $pillWoche = document.getElementById('pillWoche');
+const $pillWocheLabel = document.getElementById('pillWocheLabel');
+const $pillWocheValue = document.getElementById('pillWocheValue');
+const $filterModal = document.getElementById('filterModal');
+const $magazineModal = document.getElementById('magazineModal');
+const $magazineModalBody = document.getElementById('magazineModalBody');
+const $seenSection = document.getElementById('seenSection');
+const $seenBar = document.getElementById('seenBar');
+const $seenCount = document.getElementById('seenCount');
+const $seenGrid = document.getElementById('seenGrid');
+
+// WL-23: UI-Zustand nur lokal je Geraet — bewusst NICHT im Sync
+// (pushToServer serialisiert ausschliesslich { items }).
+const UI_KEY = 'watchlist_ui';
+function loadUiState() {
+  try {
+    return { seenOpen: false, ...JSON.parse(localStorage.getItem(UI_KEY) || '{}') };
+  } catch (_) {
+    return { seenOpen: false };
+  }
+}
+let uiState = loadUiState();
+function saveUiState() {
+  localStorage.setItem(UI_KEY, JSON.stringify(uiState));
+}
 const $addModal = document.getElementById('addModal');
 const $detailModal = document.getElementById('detailModal');
 const $searchInput = document.getElementById('searchInput');
@@ -136,15 +164,18 @@ function openOverlay(overlayEl, focusTarget){
 }
 
 // Overlay schliessen: inert weg, Trap-Listener entfernen, Fokus zuruecksetzen.
-function closeOverlay(overlayEl){
+// restoreFocus=false fuer Uebergaenge Overlay->Overlay (WL-23: Woche->Reader),
+// sonst reisst die Rueckgabe den Fokus in das gerade geschlossene Overlay.
+function closeOverlay(overlayEl, restoreFocus = true){
   setBackgroundInert(false);
   const handler = _trapHandlers.get(overlayEl);
   if(handler){ overlayEl.removeEventListener('keydown', handler); _trapHandlers.delete(overlayEl); }
-  if(lastFocused && typeof lastFocused.focus === 'function'){ lastFocused.focus(); lastFocused = null; }
+  if(restoreFocus && lastFocused && typeof lastFocused.focus === 'function'){ lastFocused.focus(); }
+  lastFocused = null;
 }
 
 function setBackgroundInert(on){
-  document.querySelectorAll('#app > header, #app > .filter-bar-wrap, #app > #magazineTeaser, #app > #shortlistSection, #app > #watchlist').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
+  document.querySelectorAll('#app > header, #app > #pillRow, #app > #shortlistSection, #app > #watchlist, #app > #seenSection').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
 }
 
 function focusables(root){
@@ -176,9 +207,9 @@ async function init() {
   if (autoAdd.tmdbId && autoAdd.mediaType) {
     await handleAutoAdd(autoAdd.tmdbId, autoAdd.mediaType);
   }
-  // Wochen-Magazin (WL-5)
+  // Wochen-Magazin (WL-5; WL-23: Pille statt Teaser im Fluss)
   await fetchMagazine();
-  renderMagazineTeaser();
+  renderMagazinePill();
   maybeAutoOpenMagazine();
 }
 
@@ -841,27 +872,15 @@ function renderFilterBar() {
   // REQ-P2-Q: zwei Divider nie nebeneinander — Service-Divider nur zeigen, wenn
   // rechts davon wirklich Service-Chips stehen (sonst kollabiert er auf .hidden).
   if (serviceDivider) serviceDivider.classList.toggle('hidden', usedServices.length === 0 && !hasVorgemerkt);
-
-  // REQ-P2-P: Overflow-Affordanz (Fade links/rechts) nach jedem Rebuild messen.
-  requestAnimationFrame(updateFilterFade);
 }
-
-// REQ-P2-P: blendet links/rechts einen Fade ein, solange in die jeweilige
-// Richtung noch Chips ausserhalb des sichtbaren Bereichs liegen. Ab >=768px
-// bricht die Bar um (overflow:visible) -> max<=0 -> beide Fades aus.
-function updateFilterFade() {
-  const wrap = $filterBar.parentElement;
-  if (!wrap) return;
-  const max = $filterBar.scrollWidth - $filterBar.clientWidth;
-  if (max <= 1) { wrap.classList.remove('fade-left', 'fade-right'); return; }
-  const x = $filterBar.scrollLeft;
-  wrap.classList.toggle('fade-left', x > 1);
-  wrap.classList.toggle('fade-right', x < max - 1);
-}
+// WL-23: updateFilterFade ist ersatzlos entfernt — im Sheet wrappt die Bar
+// viewport-unabhaengig (.filter-sheet .filter-bar), nichts scrollt horizontal.
 
 // ---- Render: Watchlist ----
 function renderWatchlist() {
+  // WL-23 Raeum-Vertrag: BEIDE Card-Ziele raeumen, sonst stapeln Re-Renders.
   $watchlist.querySelectorAll('.card, .count-badge').forEach(el => el.remove());
+  $seenGrid.querySelectorAll('.card').forEach(el => el.remove());
 
   let filtered = items;
 
@@ -877,15 +896,17 @@ function renderWatchlist() {
     filtered = filtered.filter(i => i.serviceId === activeService);
   }
 
-  // Sort: unwatched first, then by active sort
-  filtered.sort((a, b) => {
-    if (a.watched !== b.watched) return a.watched ? 1 : -1;
+  // WL-23: strikt zweiwertiger Split — truthy watched -> gesehen, alles
+  // andere (auch undefined) bleibt offen. Kein drittes Bucket.
+  const bySort = (a, b) => {
     if (activeSort === 'rating') return (b.rating || 0) - (a.rating || 0);
     if (activeSort === 'alpha') return (a.title || '').localeCompare(b.title || '', 'de');
     return (b.addedAt || 0) - (a.addedAt || 0);
-  });
+  };
+  const open = filtered.filter(i => !i.watched).sort(bySort);
+  const seen = filtered.filter(i => i.watched).sort(bySort);
 
-  if (filtered.length === 0 && items.length === 0) {
+  if (items.length === 0) {
     $emptyState.classList.remove('hidden');
   } else {
     $emptyState.classList.add('hidden');
@@ -896,7 +917,6 @@ function renderWatchlist() {
       badge.textContent = 'Keine Ergebnisse für diesen Filter';
       $watchlist.appendChild(badge);
     } else {
-      const unwatched = filtered.filter(i => !i.watched).length;
       const badge = document.createElement('div');
       badge.className = 'count-badge';
       // REQ-P2-R: Filterkontext explizit machen — "gesamt" war bei aktivem
@@ -909,14 +929,58 @@ function renderWatchlist() {
       if (activeService === '__vorgemerkt__') scope = `${typePrefix}vorgemerkt`;
       else if (activeService) scope = `${typePrefix}bei ${SERVICES.find(s => s.id === activeService)?.name || 'Dienst'}`;
       else scope = typeLabel || 'Titel';
-      badge.textContent = `${unwatched} offen · ${filtered.length} ${scope}`;
+      badge.textContent = `${open.length} offen · ${filtered.length} ${scope}`;
       $watchlist.appendChild(badge);
+
+      // WL-23 Leerlauf-Vertrag: alles Gefilterte ist gesehen -> sagen, wo es liegt,
+      // statt eine leere Mitte zu zeigen.
+      if (open.length === 0 && seen.length > 0) {
+        const hint = document.createElement('div');
+        hint.className = 'count-badge seen-hint';
+        hint.textContent = seen.length === 1
+          ? 'Keine offenen Titel — 1 gesehener liegt unter „Gesehen"'
+          : `Keine offenen Titel — ${seen.length} gesehene liegen unter „Gesehen"`;
+        $watchlist.appendChild(hint);
+      }
     }
 
-    filtered.forEach(item => {
+    open.forEach(item => {
       $watchlist.appendChild(createCard(item));
     });
   }
+
+  renderSeenSection(seen);
+  updateFilterPill();
+}
+
+// WL-23: Gesehen-Sektion — Leiste immer (ab 1 Titel), Raster nur aufgeklappt.
+function renderSeenSection(seen) {
+  if (seen.length === 0) {
+    $seenSection.classList.add('hidden');
+    return;
+  }
+  $seenSection.classList.remove('hidden');
+  $seenCount.textContent = `${seen.length} Titel`;
+  const isOpen = !!uiState.seenOpen;
+  $seenBar.setAttribute('aria-expanded', String(isOpen));
+  $seenBar.classList.toggle('open', isOpen);
+  $seenGrid.classList.toggle('hidden', !isOpen);
+  if (isOpen) {
+    seen.forEach(item => $seenGrid.appendChild(createCard(item)));
+  }
+}
+
+// WL-23: Filter-Pille zeigt den aktiven Stand kompakt; Akzent bei Abweichung
+// vom Default (Alle · Neu).
+function updateFilterPill() {
+  const typeLabel = activeFilter === 'movie' ? 'Filme' : activeFilter === 'tv' ? 'Serien' : 'Alle';
+  let svcLabel = null;
+  if (activeService === '__vorgemerkt__') svcLabel = 'Vorgemerkt';
+  else if (activeService) svcLabel = SERVICES.find(s => s.id === activeService)?.name || null;
+  const sortLabel = activeSort === 'rating' ? 'Bewertung' : activeSort === 'alpha' ? 'A–Z' : 'Neu';
+  $pillFilterValue.textContent = [typeLabel, svcLabel, sortLabel].filter(Boolean).join(' · ');
+  const isDefault = activeFilter === 'all' && !activeService && activeSort === 'added';
+  $pillFilter.classList.toggle('pill-active', !isDefault);
 }
 
 function createCard(item) {
@@ -1362,9 +1426,24 @@ function bindEvents() {
 
   $btnSave.addEventListener('click', addItem);
 
-  // REQ-P2-P: Fade-Affordanz live halten bei horizontalem Scroll + Resize.
-  $filterBar.addEventListener('scroll', updateFilterFade, { passive: true });
-  window.addEventListener('resize', updateFilterFade);
+  // ---- WL-23: Kompakt-Kopf, Sheet, Overlay, Gesehen ----
+  $pillFilter.addEventListener('click', openFilterSheet);
+  document.getElementById('filterClose').addEventListener('click', closeFilterSheet);
+  $filterModal.addEventListener('click', (e) => {
+    if (e.target === $filterModal) closeFilterSheet();
+  });
+
+  $pillWoche.addEventListener('click', openMagazineModal);
+  document.getElementById('magazineModalClose').addEventListener('click', () => closeMagazineModal());
+  $magazineModal.addEventListener('click', (e) => {
+    if (e.target === $magazineModal) closeMagazineModal();
+  });
+
+  $seenBar.addEventListener('click', () => {
+    uiState.seenOpen = !uiState.seenOpen;
+    saveUiState();
+    renderWatchlist();
+  });
 
   // Filter chips
   $filterBar.addEventListener('click', (e) => {
@@ -1395,9 +1474,14 @@ function bindEvents() {
     renderWatchlist();
   });
 
+  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Detail > Add).
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if ($detailModal.classList.contains('open')) closeDetailModal();
+      const $reader = document.getElementById('magazineReader');
+      if ($reader && !$reader.classList.contains('hidden')) closeMagazineReader();
+      else if ($filterModal.classList.contains('open')) closeFilterSheet();
+      else if ($magazineModal.classList.contains('open')) closeMagazineModal();
+      else if ($detailModal.classList.contains('open')) closeDetailModal();
       else if ($addModal.classList.contains('open')) closeAddModal();
     }
   });
@@ -1443,16 +1527,24 @@ function formatShortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
 }
 
-function renderMagazineTeaser() {
-  const $teaser = document.getElementById('magazineTeaser');
-  if (!$teaser) return;
+// WL-23: aus renderMagazineTeaser destilliert — die Pille traegt nur Woche + Zahl,
+// der Teaser lebt im Overlay (on-demand beim Oeffnen gerendert).
+function renderMagazinePill() {
   const all = magazineItems();
-  // Empty-State-Strategie (WL-17/REQ-P3-K): Teaser blendet ohne Magazin-Daten
-  // aus (sekundaere Schiene, s. renderShortlist) statt eines Platzhalters.
-  if (all.length === 0) { $teaser.classList.add('hidden'); return; }
+  // Empty-State-Strategie (WL-17/REQ-P3-K): ohne Magazin-Daten blendet die
+  // Pille aus (sekundaere Schiene, s. renderShortlist); #pillFilter nimmt
+  // dann die volle Breite (flex).
+  if (all.length === 0) { $pillWoche.classList.add('hidden'); return; }
+  const week = magazine.issue ? magazine.issue.week : '';
+  $pillWocheLabel.textContent = week ? `Woche ${week}` : 'Streaming-Woche';
+  $pillWocheValue.textContent = `${all.length} Titel`;
+  $pillWoche.classList.remove('hidden');
+}
 
-  // Show all the issue's posters in a wrapping grid so the teaser fills out
-  // like a small magazine cover (was just the first 3).
+// WL-23: Sichtbarkeits-Regime des Magazin-Overlays ist AUSSCHLIESSLICH .open;
+// der Body wird bei jedem Oeffnen frisch gerendert, nie waehrend es offen ist.
+function renderMagazineModalBody() {
+  const all = magazineItems();
   const thumbs = all.slice(0, 12)
     .map(it => {
       const url = tmdbPoster(it.poster_path, 'w185');
@@ -1472,23 +1564,45 @@ function renderMagazineTeaser() {
     ? `${subParts.join(' · ')}, kuratiert für deinen Geschmack`
     : `${all.length} Titel, kuratiert für deinen Geschmack`;
   const week = magazine.issue ? magazine.issue.week : '';
-  $teaser.innerHTML = `
-    <div class="mag-teaser-card" id="magTeaserCard" role="button" tabindex="0" aria-label="Wochen-Magazin öffnen">
+  $magazineModalBody.innerHTML = `
+    <div class="mag-teaser-card in-modal">
       <div class="mag-teaser-head">
         <span class="mag-teaser-label">Streaming-Woche</span>
         <span class="mag-teaser-issue">Nr. ${esc(String(week))} · ${esc(formatIssueDate(magazine.issue && magazine.issue.date))}</span>
       </div>
-      <p class="mag-teaser-title">Dein Wochen-Magazin</p>
       <p class="mag-teaser-sub">${sub}</p>
       <div class="mag-teaser-thumbs">${thumbs}</div>
-      <button class="mag-teaser-btn">Magazin lesen</button>
+      <button class="mag-teaser-btn" id="magReadBtn">Magazin lesen</button>
     </div>`;
-  $teaser.classList.remove('hidden');
-  const card = document.getElementById('magTeaserCard');
-  card.addEventListener('click', openMagazineReader);
-  card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMagazineReader(); }
+  document.getElementById('magReadBtn').addEventListener('click', () => {
+    // Fokus-Ausnahme Overlay->Reader: Rueckgabe unterdruecken, sonst landet der
+    // Fokus im geschlossenen Overlay; der Reader setzt ihn selbst (openOverlay).
+    closeMagazineModal({ restoreFocus: false });
+    $pillWoche.focus();
+    openMagazineReader();
   });
+}
+
+function openMagazineModal() {
+  if (magazineItems().length === 0) return;
+  renderMagazineModalBody();
+  $magazineModal.classList.add('open');
+  openOverlay($magazineModal, () => { const b = document.getElementById('magReadBtn'); if (b) b.focus(); });
+}
+
+function closeMagazineModal(opts) {
+  $magazineModal.classList.remove('open');
+  closeOverlay($magazineModal, !(opts && opts.restoreFocus === false));
+}
+
+function openFilterSheet() {
+  $filterModal.classList.add('open');
+  openOverlay($filterModal, () => { const c = document.getElementById('filterClose'); if (c) c.focus(); });
+}
+
+function closeFilterSheet() {
+  $filterModal.classList.remove('open');
+  closeOverlay($filterModal);
 }
 
 function maybeAutoOpenMagazine() {
@@ -1862,9 +1976,8 @@ async function addRecommendationFromMagazine(rec) {
 
 const $magClose = document.getElementById('magazineClose');
 if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMagazineReader();
-});
+// WL-23: der fruehere Modul-Level-Escape-Listener ist gestrichen — Escape
+// laeuft zentral ueber die Kette in bindEvents (oberstes Overlay zuerst).
 
 const $magAddBtn = document.getElementById('magazineAddBtn');
 if ($magAddBtn) {
