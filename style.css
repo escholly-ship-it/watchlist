@@ -79,7 +79,6 @@
   --radius-sm: 0.5rem;
 
   /* Spacing */
-  --gap-scroll: 1rem;
   --gap-card: 1.5rem;
   --margin-outer: 1.25rem;
   --gap-section: 3rem;
@@ -399,9 +398,17 @@ body {
 
 /* ---- Shortlist Section ---- */
 .shortlist-section {
-  padding: 4px 0 12px;
-  padding-left: var(--content-pad);
-  padding-right: 0;
+  /* Horizontal-Padding identisch zur .watchlist je Breakpoint — Voraussetzung
+     dafuer, dass die %-Spaltenformel der Karten die Grid-Kachel exakt trifft */
+  padding: 4px 8px 12px;
+}
+
+@media (min-width: 500px) {
+  .shortlist-section { padding-inline: 12px; }
+}
+
+@media (min-width: 768px) {
+  .shortlist-section { padding-inline: var(--content-pad); }
 }
 
 .shortlist-title {
@@ -415,14 +422,21 @@ body {
 
 .shortlist-track {
   display: flex;
-  gap: var(--gap-scroll);
+  gap: 6px; /* wie .watchlist-Basis; Breakpoints unten halten die Parität */
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
   padding-bottom: var(--space-1);
   /* REQ-P3-I: sanftes Einrasten der fuehrenden Karte am linken Rand */
   scroll-snap-type: x proximity;
-  /* Bleed: kein rechtes Padding — Poster bluten über den Rand */
+}
+
+@media (min-width: 500px) {
+  .shortlist-track { gap: var(--space-2); }
+}
+
+@media (min-width: 1024px) {
+  .shortlist-track { gap: 10px; }
 }
 
 .shortlist-track::-webkit-scrollbar { display: none; }
@@ -430,27 +444,36 @@ body {
 .shortlist-card {
   position: relative;
   flex-shrink: 0;
-  width: 100px;
+  width: calc((100% - 2 * 6px) / 3); /* = Grid-Kachel: 3 Spalten, gap 6px */
   aspect-ratio: 2/3;
   border-radius: var(--radius-poster);
   overflow: hidden;
   background: var(--surface-3);
   cursor: grab;
   transition: transform 0.15s, opacity 0.15s;
-  border: 2px solid transparent;
+  /* Drag-over-Markierung als outline statt border: border wuerde bei
+     box-sizing: border-box das Poster 4px kleiner machen als die randlose
+     Grid-Kachel — die Boxen sind seit WL-26b pixelgleich */
+  outline: 2px solid transparent;
+  outline-offset: -2px;
   scroll-snap-align: start; /* REQ-P3-I */
 }
 
-/* Desktop-Skalierung (768/1024, Grid-Breakpoints) — die feste Breite je
-   Breakpoint bleibt Pflicht: overflow-x + scroll-snap brauchen sie.
-   Achtung Doppelpflege: das sizes-Attribut in renderShortlist() (app.js)
-   spiegelt diese Breiten — Aenderung hier zieht dort nach. */
+/* Fluide Spaltenformel, identisch zur .watchlist (3/4/5/6 Spalten, gleiche
+   gaps + Paddings — siehe .shortlist-section/.shortlist-track oben).
+   Achtung Doppelpflege: aendert sich das Grid (Spalten, gap, padding), ziehen
+   Section-Padding, Track-gap und diese width-Formeln nach — und das
+   sizes-Attribut in renderShortlist() (app.js) spiegelt dieselbe Formel. */
+@media (min-width: 500px) {
+  .shortlist-card { width: calc((100% - 3 * var(--space-2)) / 4); }
+}
+
 @media (min-width: 768px) {
-  .shortlist-card { width: 120px; }
+  .shortlist-card { width: calc((100% - 4 * var(--space-2)) / 5); }
 }
 
 @media (min-width: 1024px) {
-  .shortlist-card { width: 140px; }
+  .shortlist-card { width: calc((100% - 5 * 10px) / 6); }
 }
 
 .shortlist-card:active {
@@ -562,7 +585,7 @@ body {
 }
 
 .shortlist-card.drag-over {
-  border-color: var(--primary);
+  outline-color: var(--primary);
   transform: scale(1.05);
 }
 
@@ -610,7 +633,11 @@ body {
   cursor: not-allowed;
 }
 
-/* ---- Watchlist Grid (Poster-Grid) ---- */
+/* ---- Watchlist Grid (Poster-Grid) ----
+   Achtung Doppelpflege: Spaltenzahl, gap und padding werden von der Shortlist
+   gespiegelt (.shortlist-section, .shortlist-track, .shortlist-card — fluide
+   Spaltenformel) UND vom POSTER_SIZES-String in app.js. Wer hier Spalten,
+   gaps oder paddings aendert, zieht alle Spiegel-Orte nach. */
 .watchlist {
   padding: 0 8px calc(var(--safe-bottom) + 16px);
   display: grid;

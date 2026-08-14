@@ -569,14 +569,9 @@ function renderShortlist() {
 
     const svc = SERVICES.find(s => s.id === item.serviceId);
 
-    // sizes spiegelt die .shortlist-card-Breiten aus style.css (100/120/140,
-    // Breakpoints 768/1024) — bei Breiten-Aenderung dort BEIDE Orte anfassen.
-    // Der echte Bild-Slot ist wegen 2px border je 4px schmaler; kippt die
-    // Kandidatenwahl nicht (nachgerechnet DPR 1 + 2), deshalb bewusst die
-    // CSS-Werte statt der Slot-Werte.
     card.innerHTML = `
       ${item.poster
-        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" srcset="${tmdbPoster(item.poster, 'w185')} 185w, ${tmdbPoster(item.poster, 'w342')} 342w" sizes="(min-width: 1024px) 140px, (min-width: 768px) 120px, 100px" alt="${escAttr(item.title)}" loading="lazy">`
+        ? `<img class="shortlist-poster" src="${tmdbPoster(item.poster, 'w185')}" srcset="${posterSrcset(item.poster)}" sizes="${POSTER_SIZES}" alt="${escAttr(item.title)}" loading="lazy">`
         : `<div class="shortlist-no-poster">🎬</div>`
       }
       ${svcMarkerHtml(svc)}
@@ -797,6 +792,19 @@ async function fetchProviders(tmdbId, mediaType) {
 
 function tmdbPoster(path, size = 'w342') {
   return path ? `${TMDB_IMG}/${size}${path}` : null;
+}
+
+// Kachelbreite fuer srcset — spiegelt die fluide Spaltenformel von .watchlist
+// UND .shortlist-card (style.css, dort der Gegen-Verweis): 3/4/5/6 Spalten;
+// Paddings 2*8/2*12/2*20 px + gaps 2*6/3*8/4*8/5*10 px. min() deckelt ab
+// --content-max (1440 px). Border-los seit WL-26b, kein Slot-Abzug noetig.
+// Annahme 20 px = --margin-outer (1.25rem bei 16-px-Wurzelschrift); bei
+// vergroesserter Browser-Schrift ueberschaetzt sizes nur (kostet Bytes,
+// keine Unschaerfe).
+const POSTER_SIZES = '(min-width: 1024px) min(calc((100vw - 90px) / 6), 232px), (min-width: 768px) calc((100vw - 72px) / 5), (min-width: 500px) calc((100vw - 48px) / 4), calc((100vw - 28px) / 3)';
+
+function posterSrcset(path) {
+  return `${tmdbPoster(path, 'w185')} 185w, ${tmdbPoster(path, 'w342')} 342w, ${tmdbPoster(path, 'w500')} 500w`;
 }
 
 function tmdbBackdrop(path) {
@@ -1079,7 +1087,7 @@ function createCard(item) {
 
   card.innerHTML = `
     ${item.poster
-      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" alt="${escAttr(item.title)}" loading="lazy">`
+      ? `<img class="card-poster" src="${tmdbPoster(item.poster)}" srcset="${posterSrcset(item.poster)}" sizes="${POSTER_SIZES}" alt="${escAttr(item.title)}" loading="lazy">`
       : `<div class="card-no-poster">🎬</div>`
     }
     <div class="card-overlay">
