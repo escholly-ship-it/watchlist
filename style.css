@@ -2016,3 +2016,75 @@ body.mag-open { overflow: hidden; }
 .seen-grid {
   padding: 12px 0 0;
 }
+
+/* ============================================
+   WL-25 — Inline-Logos neben dem Namen
+   ============================================ */
+
+.svc-inline-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.svc-inline-logo.lg {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+/* Filter-Chips: Logo ersetzt den Marken-Punkt; Aktiv-Zustand nach
+   Gate-Mockup (Akzent statt Markenfuellung — Kachel nie auf gleichfarbigem
+   Grund). Faellt das Logo aus, nimmt der Fallback has-logo zurueck und der
+   Punkt kehrt via ::before zurueck. */
+.filter-chip.service-chip.has-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 8px;
+}
+.filter-chip.service-chip.has-logo::before { display: none; }
+.filter-chip.service-chip.has-logo.active {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-color: var(--primary);
+  color: var(--text);
+  box-shadow: none;
+}
+
+/* Detail-Badges: neutrale Pille (surface-3 unter dem surface-5-Modal),
+   Textfarbe explizit (Basisregel sagt white), normale Schreibweise neben
+   der Kachel. */
+.detail-service-badge.with-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--ghost);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-xs);
+  padding: 4px 12px 4px 6px;
+}
+.detail-provider-badge.with-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--ghost);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 4px 10px 4px 5px;
+}
+.detail-provider-badge.with-logo:not(.is-current) { opacity: 0.7; }
+.detail-provider-badge.with-logo.is-current { border-color: var(--primary); }
+
+/* Add-Flow: Kachel vor dem Namen, Layout zentriert wie bisher */
+.service-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
