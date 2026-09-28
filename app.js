@@ -3,8 +3,8 @@
    ============================================ */
 
 // ---- Configuration ----
-const TMDB_API_KEY = '1c0da1f5ff6aace3b668f89321b5c601';
-const TMDB_BASE = 'https://api.themoviedb.org/3';
+// WL-27: TMDB nur noch ueber den Worker — kein Schluessel im Browser.
+const WORKER_BASE = 'https://watchlist-sync.escholly.workers.dev';
 const TMDB_IMG = 'https://image.tmdb.org/t/p';
 const STORAGE_KEY = 'watchlist_items';
 const WATCH_REGION = 'DE';
@@ -18,7 +18,7 @@ const WATCH_REGION = 'DE';
  * iOS-Homescreen-Bookmarks.
  * Cross-Ref: Sprint 304 sessionStorage-Audit (4 SYNC_KEY-Hits), Sprint 305 WL-8.
  */
-const SYNC_URL = 'https://watchlist-sync.escholly.workers.dev/sync';
+const SYNC_URL = `${WORKER_BASE}/sync`;
 let syncStatus = 'idle'; // idle | syncing | synced | error
 
 // Read sync key from URL: ?key=KEY (query param) or #sync=KEY (legacy hash)
@@ -49,22 +49,30 @@ if (SYNC_KEY) {
 // WL-24 (2026-08-14): logo = TMDB logo_path (Quelle /watch/providers, Region DE,
 // gemessen 2026-08-14). Sky zeigt bewusst das Sky-Go-Logo (Customer hat Sky Go;
 // die Erkennung fasst WOW=30 + Sky Go=29 weiter unter 'sky' zusammen).
+// WL-28 (2026-09-28): IDs neu gemessen (/watch/providers, watch_region=DE):
+// Sky nur noch Sky Go 29 (WOW 30 zaehlt nicht, Customer hat Sky Go); ARTE 234,
+// 3sat 2211, KiKA 2081 neu als freie Mediatheken (free: true); ungemessene
+// Alt-IDs 119/384/536 und SkyShowtime 1773 raus. Spiegel der Worker-Liste
+// AVAILABILITY_SERVICES — dort wird entschieden, hier nur angezeigt.
 // RTL: [2750] ist die heutige RTL+-ID (Gratis-Stufe traegt dieselbe ID via
 // ads-Merge); die frueheren 298/1771 sind stale — 1771 gehoert heute Takflix
 // (Falsch-Positiv-Risiko). Amazon-Channel-Varianten bewusst nicht gemappt.
 const SERVICES = [
-  { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8],            logo: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
-  { id: 'prime',     name: 'Prime Video', color: '#00a8e1', tmdbIds: [9, 119],       logo: '/pvske1MyAoymrs5bguRfVqYiM9a.jpg' },
-  { id: 'disney',    name: 'Disney+',     color: '#113ccf', tmdbIds: [337],          logo: '/97yvRBw1GzX7fXprcF80er19ot.jpg' },
-  { id: 'apple',     name: 'Apple TV+',   color: '#555',    tmdbIds: [350],          logo: '/mcbz1LgtErU9p4UdbZ0rG6RTWHX.jpg' },
-  { id: 'sky',       name: 'Sky',         color: '#002f5f', tmdbIds: [30, 1773, 29], logo: '/vDdk3LyjWkYlfCtkrhkjFKFK1Hg.jpg' },
-  { id: 'hbo',       name: 'HBO Max',     color: '#b91ad1', tmdbIds: [384, 1899],    logo: '/jbe4gVSfRlbPTdESXhEKpornsfu.jpg' },
-  { id: 'paramount', name: 'Paramount+',  color: '#0064ff', tmdbIds: [531],          logo: '/h5DcR0J2EESLitnhR8xLG1QymTE.jpg' },
-  { id: 'magenta',   name: 'Magenta TV',  color: '#e20074', tmdbIds: [178],          logo: '/nCsFBTEmlCMc5NA4fwPuluTz6AO.jpg' },
-  { id: 'joyn',      name: 'Joyn',        color: '#169b62', tmdbIds: [304, 421],     logo: '/3tKojIkk9QpkDUeU8HgpHQ9Jb2v.jpg' },
-  { id: 'ard',       name: 'ARD',         color: '#004e8a', tmdbIds: [219],          logo: '/avItehPq07h5nKCJgwNTxl6OD0y.jpg' },
-  { id: 'zdf',       name: 'ZDF',         color: '#fa7d19', tmdbIds: [537, 536],     logo: '/ugus0p8BGGhE8sxhwAjJz2o8jyy.jpg' },
-  { id: 'rtl',       name: 'RTL+',        color: '#e3001b', tmdbIds: [2750],         logo: '/acZuR8b9gDqMQnNFoNn82NYk72X.jpg' },
+  { id: 'netflix',   name: 'Netflix',     color: '#e50914', tmdbIds: [8, 1796],     logo: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
+  { id: 'prime',     name: 'Prime Video', color: '#00a8e1', tmdbIds: [9, 2100],     logo: '/pvske1MyAoymrs5bguRfVqYiM9a.jpg' },
+  { id: 'disney',    name: 'Disney+',     color: '#113ccf', tmdbIds: [337],         logo: '/97yvRBw1GzX7fXprcF80er19ot.jpg' },
+  { id: 'apple',     name: 'Apple TV+',   color: '#555',    tmdbIds: [350],         logo: '/mcbz1LgtErU9p4UdbZ0rG6RTWHX.jpg' },
+  { id: 'sky',       name: 'Sky',         color: '#002f5f', tmdbIds: [29],          logo: '/vDdk3LyjWkYlfCtkrhkjFKFK1Hg.jpg' },
+  { id: 'hbo',       name: 'HBO Max',     color: '#b91ad1', tmdbIds: [1899],        logo: '/jbe4gVSfRlbPTdESXhEKpornsfu.jpg' },
+  { id: 'paramount', name: 'Paramount+',  color: '#0064ff', tmdbIds: [531],         logo: '/h5DcR0J2EESLitnhR8xLG1QymTE.jpg' },
+  { id: 'magenta',   name: 'Magenta TV',  color: '#e20074', tmdbIds: [178],         logo: '/nCsFBTEmlCMc5NA4fwPuluTz6AO.jpg' },
+  { id: 'joyn',      name: 'Joyn',        color: '#169b62', tmdbIds: [304, 421],    logo: '/3tKojIkk9QpkDUeU8HgpHQ9Jb2v.jpg' },
+  { id: 'ard',       name: 'ARD',         color: '#004e8a', tmdbIds: [219],         logo: '/avItehPq07h5nKCJgwNTxl6OD0y.jpg', free: true },
+  { id: 'zdf',       name: 'ZDF',         color: '#fa7d19', tmdbIds: [537],         logo: '/ugus0p8BGGhE8sxhwAjJz2o8jyy.jpg', free: true },
+  { id: 'rtl',       name: 'RTL+',        color: '#e3001b', tmdbIds: [2750],        logo: '/acZuR8b9gDqMQnNFoNn82NYk72X.jpg' },
+  { id: 'arte',      name: 'ARTE',        color: '#fa4b19', tmdbIds: [234],         logo: '/ieo2l4zOaljYqJNGxWY8jWryld5.png', free: true },
+  { id: '3sat',      name: '3sat',        color: '#c8102e', tmdbIds: [2211],        logo: '/8JXyCxapBAF4lnsFmEKDkay60u9.png', free: true },
+  { id: 'kika',      name: 'KiKA',        color: '#6cb33f', tmdbIds: [2081],        logo: '/duwuE5tiQeoLsFEAVWUTwpfnBJw.png', free: true },
 ];
 
 // WL-24: eine Quelle fuer den Anbieter-Marker auf Karten — Logo-Kachel,
@@ -132,11 +140,6 @@ function detailServiceBadgeHtml(svc) {
     : `<div class="detail-service-badge" style="background:${svc.color};color:${badgeTextColor(svc.color)}">${esc(svc.name)}</div>`;
 }
 
-// Build reverse lookup: tmdbProviderId -> serviceId
-const PROVIDER_MAP = {};
-SERVICES.forEach(svc => {
-  svc.tmdbIds.forEach(pid => { PROVIDER_MAP[pid] = svc.id; });
-});
 
 // ---- Sanitize (XSS protection) ----
 // esc(): Text-Kontext (innerHTML zwischen Tags) — escaped &<>.
@@ -308,12 +311,12 @@ async function handleAutoAdd(tmdbId, mediaType) {
 
   try {
     // Fetch TMDB details
-    const detailRes = await fetch(`${TMDB_BASE}/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&language=de-DE`);
+    const detailRes = await fetch(`${WORKER_BASE}/tmdb/details?type=${encodeURIComponent(mediaType)}&id=${encodeURIComponent(tmdbId)}`, { headers: { 'X-API-Key': SYNC_KEY } });
     if (!detailRes.ok) throw new Error(`TMDB ${detailRes.status}`);
     const detail = await detailRes.json();
 
     // Fetch providers
-    const providers = await fetchProviders(tmdbId, mediaType);
+    const providers = (await fetchProviders(tmdbId, mediaType, detail.title || detail.name)) || { ...EMPTY_PROVIDERS };
 
     // Build result object (same shape as search results)
     const result = {
@@ -329,11 +332,8 @@ async function handleAutoAdd(tmdbId, mediaType) {
       first_air_date: detail.first_air_date,
     };
 
-    // Pick first available flat service, fallback to rent/buy
-    let serviceId = null;
-    if (providers.flat.length > 0) serviceId = providers.flat[0];
-    else if (providers.rent.length > 0) serviceId = providers.rent[0];
-    else if (providers.buy.length > 0) serviceId = providers.buy[0];
+    // WL-28: nur der beste Anbieter ohne Zusatzkosten; nur leihbar → vorgemerkt
+    const serviceId = providers.flat[0] || null;
 
     if (!serviceId) {
       // No provider yet (upcoming title) — bookmark as "vorgemerkt" instead of
@@ -348,6 +348,7 @@ async function handleAutoAdd(tmdbId, mediaType) {
         overview: result.overview,
         rating: result.vote_average,
         releaseDate: result.release_date || result.first_air_date || null,
+        providers,
       });
       showAutoAddToast(`„${getTitle(result)}" ${added ? 'vorgemerkt' : 'ist bereits auf deiner Watchlist'}`, added ? 'success' : 'info');
       cleanAutoAddParams();
@@ -738,56 +739,70 @@ function importData(json) {
 
 // ---- TMDB API ----
 async function searchTmdb(query) {
-  if (!TMDB_API_KEY || !query.trim()) return [];
-  const url = `${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&language=de-DE&query=${encodeURIComponent(query)}&page=1&include_adult=false`;
+  if (!SYNC_ENABLED || !query.trim()) return [];
+  const url = `${WORKER_BASE}/tmdb/search?q=${encodeURIComponent(query)}`;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { 'X-API-Key': SYNC_KEY } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    return (data.results || [])
-      .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
-      .slice(0, 8);
+    return data.results || [];
   } catch (err) {
     console.error('TMDB search error:', err);
     return [];
   }
 }
 
-async function fetchProviders(tmdbId, mediaType) {
-  const url = `${TMDB_BASE}/${mediaType}/${tmdbId}/watch/providers?api_key=${TMDB_API_KEY}`;
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    const de = data.results?.[WATCH_REGION];
-    if (!de) return { flat: [], rent: [], buy: [] };
+// WL-28: Urteil des Workers → das bisherige providers-Format. flat = Dienste
+// ohne Zusatzkosten in Rangfolge (freie Mediathek zuerst, dann Abos im Profil);
+// rent/buy bleiben leer, Leih-Angebote stehen nur als Namen in rentOnly.
+function providersFromVerdict(v) {
+  if (!v || v.error) return null;
+  const list = [v.best, ...(v.alternatives || [])].filter(Boolean);
+  const links = {};
+  list.forEach(o => { links[o.service] = o.link; });
+  return {
+    flat: list.map(o => o.service),
+    rent: [],
+    buy: [],
+    rentOnly: v.rentOnly || [],
+    links,
+    checkedAt: v.checkedAt || Date.now(),
+  };
+}
 
-    const mapProviders = (list) => {
-      if (!list) return [];
-      const mapped = new Set();
-      list.forEach(p => {
-        const svcId = PROVIDER_MAP[p.provider_id];
-        if (svcId) mapped.add(svcId);
+const EMPTY_PROVIDERS = { flat: [], rent: [], buy: [], rentOnly: [], links: {} };
+const AVAILABILITY_BATCH = 40;          // = AVAILABILITY_BATCH_MAX im Worker
+const AVAILABILITY_STALE_MS = 12 * 3600 * 1000;
+
+// Eine Liste {type,id,title} → Map "type:id" → providers (fehlt bei Fehler).
+async function fetchAvailability(list) {
+  const out = new Map();
+  if (!SYNC_ENABLED || list.length === 0) return out;
+  for (let i = 0; i < list.length; i += AVAILABILITY_BATCH) {
+    const chunk = list.slice(i, i + AVAILABILITY_BATCH);
+    try {
+      const res = await fetch(`${WORKER_BASE}/availability`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
+        body: JSON.stringify({ items: chunk }),
       });
-      return [...mapped];
-    };
-
-    // Merge flatrate + free + ads into one "available in subscription/free" list
-    // ARD/ZDF are free mediatheken (appear under "free" or "ads", not "flatrate")
-    // RTL+ free tier appears under "ads"
-    const allFlat = new Set([
-      ...mapProviders(de.flatrate),
-      ...mapProviders(de.free),
-      ...mapProviders(de.ads),
-    ]);
-
-    return {
-      flat: [...allFlat],
-      rent: mapProviders(de.rent),
-      buy: mapProviders(de.buy),
-    };
-  } catch (err) {
-    console.error('Provider fetch error:', err);
-    return { flat: [], rent: [], buy: [] };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      for (const [key, v] of Object.entries(data.results || {})) {
+        const p = providersFromVerdict(v);
+        if (p) out.set(key, p);
+      }
+    } catch (err) {
+      console.error('Availability error:', err);
+    }
   }
+  return out;
+}
+
+// null = Pruefung fehlgeschlagen (Netz, Worker) — nie als "kein Angebot" lesen.
+async function fetchProviders(tmdbId, mediaType, title) {
+  const map = await fetchAvailability([{ type: mediaType, id: tmdbId, title: title || '' }]);
+  return map.get(`${mediaType}:${tmdbId}`) || null;
 }
 
 function tmdbPoster(path, size = 'w342') {
@@ -1174,9 +1189,9 @@ function renderServiceGrid(available) {
     });
   });
 
-  // Auto-select if only one flat service available
-  if (flatSet.size === 1) {
-    const autoId = [...flatSet][0];
+  // WL-28: den besten Anbieter vorwaehlen (flat ist nach Rang sortiert)
+  if (flatSet.size > 0) {
+    const autoId = available.flat[0];
     const autoBtn = $serviceGrid.querySelector(`[data-service="${autoId}"]`);
     if (autoBtn) {
       autoBtn.classList.add('selected');
@@ -1219,7 +1234,7 @@ async function selectResult(result) {
   $btnSave.disabled = true;
 
   // Fetch providers
-  const providers = await fetchProviders(result.id, result.media_type);
+  const providers = (await fetchProviders(result.id, result.media_type, getTitle(result))) || { ...EMPTY_PROVIDERS };
   availableServices = providers;
 
   // Update availability info
@@ -1228,10 +1243,10 @@ async function selectResult(result) {
     if (providers.flat.length > 0) {
       const names = providers.flat.map(id => SERVICES.find(s => s.id === id)?.name).filter(Boolean);
       infoEl.className = 'availability-info';
-      infoEl.innerHTML = `✓ Im Abo bei: ${names.join(', ')}`;
-    } else if (providers.rent.length > 0 || providers.buy.length > 0) {
+      infoEl.innerHTML = `✓ Ohne Zusatzkosten bei: ${esc(names.join(', '))}`;
+    } else if ((providers.rentOnly || []).length > 0) {
       infoEl.className = 'availability-info not-found';
-      infoEl.innerHTML = '⚡ Nicht im Flatrate-Abo, aber zum Leihen/Kaufen verfügbar';
+      infoEl.innerHTML = `⚡ Nur leihbar: ${esc(providers.rentOnly.join(', '))}`;
     } else {
       infoEl.className = 'availability-info not-found';
       infoEl.innerHTML = '⚠ Keine Streaming-Verfügbarkeit in DE gefunden';
@@ -1322,9 +1337,7 @@ async function openDetail(item) {
     ${item.overview ? `<p class="detail-overview">${esc(item.overview)}</p>` : ''}
     <div id="detailProviders"></div>
     <div class="detail-actions">
-      <a class="btn-primary-cta" href="https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE" target="_blank" rel="noopener" aria-label="Auf TMDB ansehen (öffnet neuen Tab)">
-        <span aria-hidden="true">▶</span> Ansehen <span class="btn-cta-ext" aria-hidden="true">↗</span>
-      </a>
+      ${detailCtaHtml(item, svc)}
       <div class="detail-actions-row">
         ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
           ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
@@ -1333,6 +1346,10 @@ async function openDetail(item) {
           ${item.watched ? '↩ Nicht gesehen' : '✓ Geschaut'}
         </button>
         <button class="btn-remove" data-id="${item.id}">Entfernen</button>
+      </div>
+      <div class="detail-source">
+        <span>Verfügbarkeit: JustWatch</span>
+        <a href="${tmdbWatchUrl(item)}" target="_blank" rel="noopener" aria-label="${item.serviceId ? 'Auf TMDB ansehen' : 'Angebote auf TMDB'} (öffnet neuen Tab)">${item.serviceId ? 'Auf TMDB ansehen' : 'Angebote auf TMDB'} ↗</a>
       </div>
     </div>
   `;
@@ -1383,70 +1400,68 @@ async function openDetail(item) {
   const $providers = document.getElementById('detailProviders');
   $providers.innerHTML = '<div class="availability-loading"><div class="spinner"></div> Verfügbarkeit prüfen...</div>';
 
-  const providers = await fetchProviders(item.tmdbId, item.type);
+  const providers = await fetchProviders(item.tmdbId, item.type, item.title);
 
   // Race condition guard: only update if this is still the active detail view
   if (requestId !== detailRequestId) return;
 
   // A vorgemerkt item may now have a provider — promote it. Re-bind svc and
   // re-render the header badge (which was absent while service-less).
-  if (tryPromote(item, providers)) {
+  if (!providers) {
+    $providers.innerHTML = '<div class="availability-info not-found">⚠ Verfügbarkeit gerade nicht prüfbar</div>';
+    return;
+  }
+
+  // WL-28: frischer Stand gilt — bester Anbieter, oder vorgemerkt ohne Angebot.
+  // Badge-Quelle wie beim Erst-Render (WL-25).
+  const change = applyProviders(item, providers);
+  saveItems();
+  if (change) {
     svc = SERVICES.find(s => s.id === item.serviceId);
-    saveItems();
-    // WL-25: beide Zweige nutzen dieselbe Badge-Quelle wie der Erst-Render —
-    // im Promote-Fall existiert praktisch nie ein Badge (Item war vorgemerkt),
-    // der Einfuege-Zweig ist der Regelfall.
     const $hb = $content.querySelector('.detail-service-badge');
     if (svc) {
       if ($hb) $hb.outerHTML = detailServiceBadgeHtml(svc);
       else $content.insertAdjacentHTML('afterbegin', detailServiceBadgeHtml(svc));
+    } else if ($hb) {
+      $hb.remove();
     }
     renderFilterBar();
     renderWatchlist();
-  } else {
-    // Only save if providers actually changed
-    const oldProviders = JSON.stringify(item.providers || {});
-    const newProviders = JSON.stringify(providers);
-    if (oldProviders !== newProviders) {
-      item.providers = providers;
-      item.updatedAt = Date.now();
-      saveItems();
-    }
   }
 
-  // Render provider badges
+  // Render provider badges — WL-28: getrennt nach freier Mediathek und Abo
   let providerHtml = '';
-
-  if (providers.flat.length > 0) {
-    providerHtml += '<div class="detail-provider-type">Im Abo verfügbar:</div><div class="detail-providers">';
-    providers.flat.forEach(svcId => {
-      const s = SERVICES.find(x => x.id === svcId);
-      if (s) {
-        const isCurrent = svcId === item.serviceId;
-        if (s.logo) {
-          // WL-25: neutrale Mini-Chips mit Kachel + Name; is-current als
-          // DOM-Marker, damit der Logo-Fallback die Deckkraft korrekt
-          // restaurieren kann. Nicht-current dimmt via CSS auf 0.7.
-          providerHtml += `<div class="detail-provider-badge with-logo${isCurrent ? ' is-current' : ''}">${svcInlineLogoHtml(s)}${esc(s.name)}</div>`;
-        } else {
-          // Vorsorge-Zweig (heute unerreichbar, alle 12 Dienste tragen ein Logo):
-          // isCurrent: solides Badge -> WCAG-1.4.3-konforme Textfarbe mitgeben.
-          // Nicht-current: opacity:0.7 = bewusst inaktiver Zustand (WCAG-1.4.3-Ausnahme).
-          const provColor = isCurrent ? `;color:${badgeTextColor(s.color)}` : ';opacity:0.7';
-          providerHtml += `<div class="detail-provider-badge${isCurrent ? ' is-current' : ''}" style="background:${s.color}${provColor}">${esc(s.name)}</div>`;
-        }
-      }
-    });
-    providerHtml += '</div>';
+  const chip = (svcId) => {
+    const s = SERVICES.find(x => x.id === svcId);
+    if (!s) return '';
+    const isCurrent = svcId === item.serviceId;
+    if (s.logo) {
+      // WL-25: neutrale Mini-Chips mit Kachel + Name; is-current als
+      // DOM-Marker, damit der Logo-Fallback die Deckkraft korrekt
+      // restaurieren kann. Nicht-current dimmt via CSS auf 0.7.
+      return `<div class="detail-provider-badge with-logo${isCurrent ? ' is-current' : ''}">${svcInlineLogoHtml(s)}${esc(s.name)}</div>`;
+    }
+    const provColor = isCurrent ? `;color:${badgeTextColor(s.color)}` : ';opacity:0.7';
+    return `<div class="detail-provider-badge${isCurrent ? ' is-current' : ''}" style="background:${s.color}${provColor}">${esc(s.name)}</div>`;
+  };
+  const freeIds = providers.flat.filter(id => SERVICES.find(x => x.id === id)?.free);
+  const aboIds = providers.flat.filter(id => !SERVICES.find(x => x.id === id)?.free);
+  if (freeIds.length > 0) {
+    providerHtml += `<div class="detail-provider-type">Kostenlos in der Mediathek:</div><div class="detail-providers">${freeIds.map(chip).join('')}</div>`;
+  }
+  if (aboIds.length > 0) {
+    providerHtml += `<div class="detail-provider-type">In deinen Abos:</div><div class="detail-providers">${aboIds.map(chip).join('')}</div>`;
   }
 
-  // Check if current service is no longer available
-  if (providers.flat.length > 0 && !providers.flat.includes(item.serviceId)) {
-    const altNames = providers.flat.map(id => SERVICES.find(s => s.id === id)?.name).filter(Boolean);
-    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Nicht mehr bei ${esc(svc?.name || 'deinem Dienst')} im Abo! Verfügbar bei: ${esc(altNames.join(', '))}</div>`;
-  } else if (providers.flat.length === 0 && providers.rent.length === 0 && providers.buy.length === 0) {
+  if (providers.flat.length === 0 && (providers.rentOnly || []).length > 0) {
+    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">Nur leihbar: ${esc(providers.rentOnly.join(', '))}. Kein Abo und keine Mediathek hat den Titel gerade, er bleibt vorgemerkt und wird bei jedem Öffnen der App neu geprüft.</div>`;
+  } else if (providers.flat.length === 0) {
     providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Aktuell keine Streaming-Verfügbarkeit in DE gefunden</div>`;
   }
+
+  // CTA an den frisch geprueften Stand anpassen
+  const $cta = $content.querySelector('.btn-primary-cta, .detail-cta-slot');
+  if ($cta) $cta.outerHTML = detailCtaHtml(item, svc);
 
   $providers.innerHTML = providerHtml;
 }
@@ -1916,7 +1931,7 @@ function addVorgemerkt(data) {
     watched: false,
     addedAt: Date.now(),
     updatedAt: Date.now(),
-    providers: { flat: [], rent: [], buy: [] },
+    providers: data.providers || { flat: [], rent: [], buy: [] },
   });
   saveItems();
   renderFilterBar();
@@ -1924,16 +1939,41 @@ function addVorgemerkt(data) {
   return true;
 }
 
-// If a vorgemerkt item now has a provider, assign it (promote to a normal,
-// service-organised item). Mutates the item; caller persists + re-renders.
-function tryPromote(item, providers) {
-  if (item.serviceId != null) return false;
-  const sid = providers.flat[0] || providers.rent[0] || providers.buy[0] || null;
-  if (!sid) return false;
-  item.serviceId = sid;
+// WL-28: frisch gepruefte Anbieter auf ein Item anwenden. Bleibt der gewaehlte
+// Dienst ohne Zusatzkosten verfuegbar, bleibt er (manuelle Wahl respektiert);
+// sonst gilt der beste. Ohne Angebot → vorgemerkt (serviceId null).
+// Rueckgabe: 'promoted' | 'changed' | 'demoted' | null. Mutiert das Item.
+function applyProviders(item, providers) {
+  const before = item.serviceId ?? null;
+  let next = before;
+  if (!item.watched) {
+    next = providers.flat.includes(before) ? before : (providers.flat[0] || null);
+  }
+  const changedProviders = JSON.stringify(item.providers || {}) !== JSON.stringify(providers);
   item.providers = providers;
+  if (next === before) {
+    if (changedProviders) item.updatedAt = Date.now();
+    return null;
+  }
+  item.serviceId = next;
   item.updatedAt = Date.now();
-  return true;
+  if (before == null) return 'promoted';
+  return next == null ? 'demoted' : 'changed';
+}
+
+function tmdbWatchUrl(item) {
+  return `https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE`;
+}
+
+// Primaer-Aktion: direkt zum gewaehlten Anbieter (Link vom Worker: Such-Seite
+// des Dienstes oder TMDB, wo keine Such-Seite belegt ist). Ohne Anbieter keine
+// Primaer-Aktion — der TMDB-Link steht dann in der Quellen-Zeile.
+function detailCtaHtml(item, svc) {
+  if (!svc) return '<span class="detail-cta-slot"></span>';
+  const link = item.providers?.links?.[svc.id] || tmdbWatchUrl(item);
+  return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="Bei ${escAttr(svc.name)} ansehen (öffnet neuen Tab)">
+        <span aria-hidden="true">▶</span> Bei ${esc(svc.name)} ansehen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+      </a>`;
 }
 
 // Card badge label for a vorgemerkt item: future release date, else neutral.
@@ -1945,30 +1985,30 @@ function vorgemerktBadgeText(item) {
   return 'Vorgemerkt';
 }
 
-// On load: re-check providers for vorgemerkt items whose release date has
-// passed, throttled to once per 24h per item (so a cinema-only title that
-// never streams doesn't re-fetch on every load — fetchProviders swallows
-// errors to {} so a failure is indistinguishable from "no provider yet").
+// WL-28: beim App-Start alle ungesehenen Titel neu pruefen, deren letzte
+// Pruefung aelter als 12 h ist — vorgemerkte zuerst, in Bloecken zu 40 an den
+// Worker. Ersetzt den frueheren 24-h-Check nur fuer vorgemerkte Titel.
 async function resolveVorgemerkt() {
-  const today = new Date().toISOString().slice(0, 10);
   const now = Date.now();
-  const due = items.filter(i =>
-    i.serviceId == null && i.releaseDate && i.releaseDate <= today &&
-    (!i.lastPromoteCheck || now - i.lastPromoteCheck > 86400000));
+  const due = items
+    .filter(i => !i.watched && (!i.providers?.checkedAt || now - i.providers.checkedAt > AVAILABILITY_STALE_MS))
+    .sort((a, b) => (a.serviceId == null ? 0 : 1) - (b.serviceId == null ? 0 : 1));
   if (due.length === 0) return;
+  const results = await fetchAvailability(due.map(i => ({ type: i.type, id: i.tmdbId, title: i.title })));
+  if (results.size === 0) return;
   let promoted = 0;
+  let touched = false;
   for (const item of due) {
-    item.lastPromoteCheck = Date.now();
-    try {
-      const providers = await fetchProviders(item.tmdbId, item.type);
-      if (tryPromote(item, providers)) {
-        promoted++;
-        showAutoAddToast(`„${item.title}" ist jetzt verfügbar`, 'info');
-      }
-    } catch (e) { /* throttle still applied via lastPromoteCheck */ }
+    const p = results.get(`${item.type}:${item.tmdbId}`);
+    if (!p) continue;
+    touched = true;
+    const r = applyProviders(item, p);
+    if (r === 'promoted' && promoted++ === 0) {
+      const svc = SERVICES.find(s => s.id === item.serviceId);
+      showAutoAddToast(`„${item.title}" jetzt bei ${svc ? svc.name : 'einem Anbieter'}`, 'info');
+    }
   }
-  if (promoted > 0) { saveItems(); renderFilterBar(); renderWatchlist(); }
-  else { saveItems(); }  // persist lastPromoteCheck
+  if (touched) { saveItems(); renderFilterBar(); renderWatchlist(); renderShortlist(); }
 }
 
 // Returns true if the title is on the watchlist afterwards. Decoupled from any
@@ -2040,14 +2080,15 @@ async function addRecommendationFromMagazine(rec) {
       showAutoAddToast(`„${getTitle(match)}" ist schon auf deiner Watchlist`, 'info');
       return;
     }
-    const providers = await fetchProviders(match.id, type);
-    const serviceId = providers.flat[0] || providers.rent[0] || providers.buy[0] || null;
+    const providers = (await fetchProviders(match.id, type, getTitle(match))) || { ...EMPTY_PROVIDERS };
+    const serviceId = providers.flat[0] || null;
     const rating = match.vote_average ? Math.round(match.vote_average * 10) / 10 : null;
     if (!serviceId) {
       const added = addVorgemerkt({
         tmdbId: match.id, title: getTitle(match), year: getYear(match), type,
         poster: match.poster_path, backdrop: match.backdrop_path, overview: match.overview,
         rating, releaseDate: match.release_date || match.first_air_date || null,
+        providers,
       });
       showAutoAddToast(`„${getTitle(match)}" ${added ? 'vorgemerkt' : 'ist schon auf deiner Watchlist'}`, added ? 'success' : 'info');
       return;

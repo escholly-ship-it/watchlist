@@ -80,22 +80,6 @@ const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
   .sort((a, b) => a - b)
   .join('|');
 
-// TMDB provider ID → App-Service-ID (mirror of app.js SERVICES.tmdbIds).
-// providers_app feeds the in-app 1-tap-add (serviceId without client roundtrip).
-const APP_SERVICE_MAP = {
-  8: 'netflix',
-  9: 'prime', 119: 'prime',
-  337: 'disney',
-  350: 'apple',
-  30: 'sky', 1773: 'sky', 29: 'sky',
-  384: 'hbo', 1899: 'hbo',
-  531: 'paramount',
-  178: 'magenta',
-  304: 'joyn', 421: 'joyn',
-  219: 'ard',
-  537: 'zdf', 536: 'zdf',
-  298: 'rtl', 1771: 'rtl',
-};
 
 // ── WL-28: Dienstkatalog fuer die Verfuegbarkeit ─────────────────────────
 // Eine Quelle fuer die Frage "wo kann ich das ohne Zusatzkosten schauen?".
@@ -1194,7 +1178,9 @@ async function enrichMagazineItems(scored, limit, { requireProviders, reasonPref
       for (const cat of ['flatrate', 'free', 'ads']) {
         for (const p of de[cat] || []) {
           if (PROVIDER_IDS[p.provider_id]) providerNames.add(PROVIDER_IDS[p.provider_id]);
-          if (APP_SERVICE_MAP[p.provider_id]) providerAppIds.add(APP_SERVICE_MAP[p.provider_id]);
+          // WL-28: dieselbe Quelle wie /availability (WOW zaehlt nicht, ARTE schon).
+          const appSvc = AVAILABILITY_BY_TMDB.get(p.provider_id);
+          if (appSvc) providerAppIds.add(appSvc.id);
         }
       }
     }
