@@ -72,6 +72,7 @@ test('Link faellt ohne Such-Vorlage auf die TMDB-Watch-Seite', async () => {
   mockTmdb({ 5: { flatrate: [p(8, 'Netflix')] } });
   const { body } = await avail(env(['netflix']), [{ type: 'movie', id: 5, title: 'E' }]);
   assert.match(body.results['movie:5'].best.link, /themoviedb\.org\/movie\/5\/watch/);
+  assert.equal(body.results['movie:5'].best.direct, false);
 });
 
 test('zu viele Titel und fehlender Schluessel werden abgewiesen', async () => {
@@ -88,6 +89,7 @@ test('Sterben-Fall: nur frei bei ARTE, Link auf die ARTE-Suche', async () => {
   const r = body.results['movie:1232781'];
   assert.equal(r.best.service, 'arte');
   assert.equal(r.best.link, 'https://www.arte.tv/de/search/?q=Sterben');
+  assert.equal(r.best.direct, true);
 });
 
 test('WOW zaehlt nicht als Sky, Sky Go schon', async () => {

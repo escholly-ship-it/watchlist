@@ -11,6 +11,8 @@
 //                          ?member=KEY → build a specific member (default: owner)
 //   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
 //                          ?member=KEY → rebuild a specific member (default: owner)
+//   Die X-API-Key-Pruefung dieser drei ist nur Laenge >= 32 (wie /sync): sie
+//   haelt den TMDB-Schluessel aus dem Browser, schuetzt aber nicht den Proxy.
 //   GET  /tmdb/search    — TMDB-Suche fuer die App (auth: X-API-Key), ?q=
 //   GET  /tmdb/details   — TMDB-Details fuer die App (auth: X-API-Key), ?type=&id=
 //   POST /availability   — WL-28: bester Anbieter je Titel (auth: X-API-Key),
@@ -725,7 +727,12 @@ function rankAvailability(de, profile, title, ref) {
       candidates.push({ svc, kind: 'flat' });
     }
   }
-  const toOut = (c) => ({ service: c.svc.id, kind: c.kind, link: serviceLink(c.svc, title, ref) });
+  const toOut = (c) => ({
+    service: c.svc.id,
+    kind: c.kind,
+    link: serviceLink(c.svc, title, ref),
+    direct: !!(c.svc.search && title),   // false → Link ist die TMDB-Watch-Seite
+  });
   const rentOnly = [];
   if (candidates.length === 0) {
     for (const list of [de && de.rent, de && de.buy]) {

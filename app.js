@@ -272,10 +272,10 @@ async function init() {
   renderWatchlist();
   bindEvents();
   // Sync from server (non-blocking)
-  await pullFromServer();
-  // WL: promote any "vorgemerkt" items whose release is now available (after
-  // the server pull, so a promote survives the items=remote replacement).
-  await resolveVorgemerkt();
+  const pulled = await pullFromServer();
+  // WL-28: Neupruefung nur nach erfolgreichem Pull — sonst wuerde der Push der
+  // Neupruefung den Server-Stand mit der alten lokalen Liste ueberschreiben.
+  if (pulled) await resolveVorgemerkt();
   // Check for auto-add URL parameter (?add=tmdbId&type=movie)
   const autoAdd = getAutoAddParams();
   if (autoAdd.tmdbId && autoAdd.mediaType) {
@@ -457,8 +457,9 @@ async function pushToServer() {
   }
 }
 
+// true = Server-Stand geladen (oder erstmals hochgeladen); false = Fehler.
 async function pullFromServer() {
-  if (!SYNC_ENABLED) return;
+  if (!SYNC_ENABLED) return false;
   try {
     setSyncStatus('syncing');
     const res = await fetch(SYNC_URL, {
@@ -484,9 +485,11 @@ async function pullFromServer() {
 
     // Mark that we've synced at least once
     localStorage.setItem('watchlist_last_sync', Date.now().toString());
+    return true;
   } catch (err) {
     console.error('Sync pull error:', err);
     setSyncStatus('error');
+    return false;
   }
 }
 
@@ -759,13 +762,19 @@ function providersFromVerdict(v) {
   if (!v || v.error) return null;
   const list = [v.best, ...(v.alternatives || [])].filter(Boolean);
   const links = {};
-  list.forEach(o => { links[o.service] = o.link; });
+  const direct = {};
+  list.forEach(o => {
+    // nur http(s)-Links vom Worker uebernehmen
+    if (typeof o.link === 'string' && /^https:\/\//.test(o.link)) links[o.service] = o.link;
+    direct[o.service] = !!o.direct && !!links[o.service];
+  });
   return {
     flat: list.map(o => o.service),
     rent: [],
     buy: [],
     rentOnly: v.rentOnly || [],
     links,
+    direct,
     checkedAt: v.checkedAt || Date.now(),
   };
 }
@@ -1415,8 +1424,9 @@ async function openDetail(item) {
   // WL-28: frischer Stand gilt — bester Anbieter, oder vorgemerkt ohne Angebot.
   // Badge-Quelle wie beim Erst-Render (WL-25).
   const change = applyProviders(item, providers);
-  saveItems();
-  if (change) {
+  if (change) saveItems();
+  else saveItemsLocal();  // nur checkedAt neu — kein PUT /sync je Oeffnen
+  if (change && change !== 'updated') {
     svc = SERVICES.find(s => s.id === item.serviceId);
     const $hb = $content.querySelector('.detail-service-badge');
     if (svc) {
@@ -1454,7 +1464,8 @@ async function openDetail(item) {
   }
 
   if (providers.flat.length === 0 && (providers.rentOnly || []).length > 0) {
-    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">Nur leihbar: ${esc(providers.rentOnly.join(', '))}. Kein Abo und keine Mediathek hat den Titel gerade, er bleibt vorgemerkt und wird bei jedem Öffnen der App neu geprüft.</div>`;
+    const waitNote = item.watched ? '' : ' Kein Abo und keine Mediathek hat den Titel gerade, er bleibt vorgemerkt und wird bei jedem Öffnen der App neu geprüft.';
+    providerHtml += `<div class="availability-info not-found" style="margin-top:8px">Nur leihbar: ${esc(providers.rentOnly.join(', '))}.${waitNote}</div>`;
   } else if (providers.flat.length === 0) {
     providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Aktuell keine Streaming-Verfügbarkeit in DE gefunden</div>`;
   }
@@ -1949,10 +1960,11 @@ function applyProviders(item, providers) {
   if (!item.watched) {
     next = providers.flat.includes(before) ? before : (providers.flat[0] || null);
   }
-  const changedProviders = JSON.stringify(item.providers || {}) !== JSON.stringify(providers);
+  const strip = (p) => JSON.stringify({ ...(p || {}), checkedAt: 0 });
+  const changedProviders = strip(item.providers) !== strip(providers);
   item.providers = providers;
   if (next === before) {
-    if (changedProviders) item.updatedAt = Date.now();
+    if (changedProviders) { item.updatedAt = Date.now(); return 'updated'; }
     return null;
   }
   item.serviceId = next;
@@ -1968,11 +1980,15 @@ function tmdbWatchUrl(item) {
 // Primaer-Aktion: direkt zum gewaehlten Anbieter (Link vom Worker: Such-Seite
 // des Dienstes oder TMDB, wo keine Such-Seite belegt ist). Ohne Anbieter keine
 // Primaer-Aktion — der TMDB-Link steht dann in der Quellen-Zeile.
+// Ohne belegte Such-Seite (direct false) fuehrt der Knopf ehrlich beschriftet
+// zur TMDB-Watch-Seite, statt "Bei <Dienst> ansehen" zu versprechen.
 function detailCtaHtml(item, svc) {
   if (!svc) return '<span class="detail-cta-slot"></span>';
-  const link = item.providers?.links?.[svc.id] || tmdbWatchUrl(item);
-  return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="Bei ${escAttr(svc.name)} ansehen (öffnet neuen Tab)">
-        <span aria-hidden="true">▶</span> Bei ${esc(svc.name)} ansehen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+  const direct = !!item.providers?.direct?.[svc.id];
+  const link = direct ? item.providers.links[svc.id] : tmdbWatchUrl(item);
+  const label = direct ? `Bei ${svc.name} ansehen` : `${svc.name}-Angebot auf TMDB`;
+  return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="${escAttr(label)} (öffnet neuen Tab)">
+        <span aria-hidden="true">▶</span> ${esc(label)} <span class="btn-cta-ext" aria-hidden="true">↗</span>
       </a>`;
 }
 
@@ -2001,8 +2017,8 @@ async function resolveVorgemerkt() {
   for (const item of due) {
     const p = results.get(`${item.type}:${item.tmdbId}`);
     if (!p) continue;
-    touched = true;
     const r = applyProviders(item, p);
+    touched = true;
     if (r === 'promoted' && promoted++ === 0) {
       const svc = SERVICES.find(s => s.id === item.serviceId);
       showAutoAddToast(`„${item.title}" jetzt bei ${svc ? svc.name : 'einem Anbieter'}`, 'info');
@@ -2016,8 +2032,15 @@ async function resolveVorgemerkt() {
 async function addFromMagazine(it) {
   if (items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type)) return true;
 
-  if (Array.isArray(it.providers_app) && it.providers_app.length > 0) {
-    // All data already in the magazine JSON — add without client roundtrips
+  // WL-28: bester Anbieter per Pruefung (Profil + Rang); faellt sie aus, die
+  // Magazin-Liste nach Rang (freie Mediathek zuerst), ohne checkedAt — der
+  // naechste App-Start prueft dann nach.
+  const checked = await fetchProviders(it.tmdb_id, it.type, it.title);
+  const rankedApp = (Array.isArray(it.providers_app) ? it.providers_app : [])
+    .filter(id => SERVICES.some(s => s.id === id))
+    .sort((a, b) => (SERVICES.find(s => s.id === b)?.free ? 1 : 0) - (SERVICES.find(s => s.id === a)?.free ? 1 : 0));
+  const magProviders = checked || { flat: rankedApp, rent: [], buy: [], rentOnly: [], links: {}, direct: {} };
+  if (magProviders.flat.length > 0) {
     const item = {
       id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
       tmdbId: it.tmdb_id,
@@ -2028,11 +2051,11 @@ async function addFromMagazine(it) {
       backdrop: it.backdrop_path,
       overview: it.overview || '',
       rating: it.rating || null,
-      serviceId: it.providers_app[0],
+      serviceId: magProviders.flat[0],
       watched: false,
       addedAt: Date.now(),
       updatedAt: Date.now(),
-      providers: { flat: it.providers_app, rent: [], buy: [] },
+      providers: magProviders,
     };
     items.unshift(item);
     saveItems();
@@ -2053,6 +2076,7 @@ async function addFromMagazine(it) {
     overview: it.overview,
     rating: it.rating,
     releaseDate: it.upcoming_date || it.release_date || null,
+    providers: magProviders,
   });
   if (added) showAutoAddToast(`✓ „${it.title}" vorgemerkt`, 'success');
   return true;
