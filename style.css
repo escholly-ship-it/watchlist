@@ -1346,6 +1346,26 @@ body {
   box-shadow: 0 4px 16px rgba(77, 142, 255, 0.3);
   transition: box-shadow 0.2s, transform 0.15s;
 }
+/* WL-28: Quellen-Zeile unter den Aktionen — JustWatch-Nennung (TMDB-Bedingung)
+   und der TMDB-Link als Neben-Aktion; Touch-Ziel 44 px. */
+.detail-source {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+  margin-top: var(--space-1);
+}
+.detail-source a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: var(--fs-xs);
+  color: var(--primary-light);
+  text-decoration: none;
+}
+.detail-source a:hover { color: var(--text); }
 .btn-primary-cta:hover { box-shadow: 0 6px 24px rgba(77, 142, 255, 0.45); }
 .btn-primary-cta:active { transform: scale(0.98); }
 .btn-cta-ext { font-size: 0.85em; opacity: 0.75; }
