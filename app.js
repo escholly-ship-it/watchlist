@@ -763,10 +763,13 @@ function providersFromVerdict(v) {
   const list = [v.best, ...(v.alternatives || [])].filter(Boolean);
   const links = {};
   const direct = {};
+  const prefilled = {};
   list.forEach(o => {
     // nur http(s)-Links vom Worker uebernehmen
     if (typeof o.link === 'string' && /^https:\/\//.test(o.link)) links[o.service] = o.link;
     direct[o.service] = !!o.direct && !!links[o.service];
+    // aeltere Worker-Antworten ohne Feld gelten als vorbefuellt
+    prefilled[o.service] = direct[o.service] && o.prefilled !== false;
   });
   return {
     flat: list.map(o => o.service),
@@ -775,6 +778,7 @@ function providersFromVerdict(v) {
     rentOnly: v.rentOnly || [],
     links,
     direct,
+    prefilled,
     checkedAt: v.checkedAt || Date.now(),
   };
 }
@@ -1986,7 +1990,9 @@ function detailCtaHtml(item, svc) {
   if (!svc) return '<span class="detail-cta-slot"></span>';
   const direct = !!item.providers?.direct?.[svc.id];
   const link = direct ? item.providers.links[svc.id] : tmdbWatchUrl(item);
-  const label = direct ? `Bei ${svc.name} ansehen` : `${svc.name}-Angebot auf TMDB`;
+  // Such-Seite ohne Titel-Parameter (Disney+, Paramount+): ehrlich "suchen"
+  const prefilled = direct && item.providers?.prefilled?.[svc.id] !== false;
+  const label = !direct ? `${svc.name}-Angebot auf TMDB` : prefilled ? `Bei ${svc.name} ansehen` : `Bei ${svc.name} suchen`;
   return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="${escAttr(label)} (öffnet neuen Tab)">
         <span aria-hidden="true">▶</span> ${esc(label)} <span class="btn-cta-ext" aria-hidden="true">↗</span>
       </a>`;

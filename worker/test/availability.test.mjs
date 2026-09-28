@@ -69,8 +69,8 @@ test('ohne Profil zaehlen alle Abos, Leihen nie', async () => {
 });
 
 test('Link faellt ohne Such-Vorlage auf die TMDB-Watch-Seite', async () => {
-  mockTmdb({ 5: { flatrate: [p(8, 'Netflix')] } });
-  const { body } = await avail(env(['netflix']), [{ type: 'movie', id: 5, title: 'E' }]);
+  mockTmdb({ 5: { flatrate: [p(1899, 'HBO Max')] } });
+  const { body } = await avail(env(['hbo']), [{ type: 'movie', id: 5, title: 'E' }]);
   assert.match(body.results['movie:5'].best.link, /themoviedb\.org\/movie\/5\/watch/);
   assert.equal(body.results['movie:5'].best.direct, false);
 });
@@ -97,4 +97,23 @@ test('WOW zaehlt nicht als Sky, Sky Go schon', async () => {
   const { body } = await avail(env(['sky']), [{ type: 'movie', id: 6, title: 'F' }, { type: 'movie', id: 7, title: 'G' }]);
   assert.equal(body.results['movie:6'].best, null);
   assert.equal(body.results['movie:7'].best.service, 'sky');
+});
+
+test('Abo-Suchlinks: Netflix, Magenta TV, Joyn mit Titel, Disney+ nur Such-Seite', async () => {
+  mockTmdb({
+    6: { flatrate: [p(8, 'Netflix')] },
+    7: { flatrate: [p(178, 'MagentaTV')] },
+    8: { flatrate: [p(304, 'Joyn')] },
+    9: { flatrate: [p(337, 'Disney+')] },
+  });
+  const items = [6, 7, 8, 9].map((id) => ({ type: 'movie', id, title: 'Stranger Things' }));
+  const { body } = await avail(env(null), items);
+  const best = (id) => body.results[`movie:${id}`].best;
+  assert.equal(best(6).link, 'https://www.netflix.com/search?q=Stranger%20Things');
+  assert.equal(best(7).link, 'https://web.magentatv.de/suche/vod_more_web/Stranger%20Things');
+  assert.equal(best(8).link, 'https://www.joyn.de/suche?q=Stranger%20Things');
+  for (const id of [6, 7, 8]) assert.equal(best(id).prefilled, true);
+  assert.equal(best(9).link, 'https://www.disneyplus.com/de-de/browse/search');
+  assert.equal(best(9).direct, true);
+  assert.equal(best(9).prefilled, false);
 });
