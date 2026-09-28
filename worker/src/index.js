@@ -11,6 +11,11 @@
 //                          ?member=KEY → build a specific member (default: owner)
 //   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
 //                          ?member=KEY → rebuild a specific member (default: owner)
+//   GET  /tmdb/search    — TMDB-Suche fuer die App (auth: X-API-Key), ?q=
+//   GET  /tmdb/details   — TMDB-Details fuer die App (auth: X-API-Key), ?type=&id=
+//   POST /availability   — WL-28: bester Anbieter je Titel (auth: X-API-Key),
+//                          Body {items:[{type,id,title}]}, hoechstens
+//                          AVAILABILITY_BATCH_MAX Titel je Aufruf
 //
 // Scheduled handler (see wrangler.toml [triggers].crons) — WL-11 multi-tenant:
 //   "0 3 * * *"  → daily taste pre-warm for that day's roster member
@@ -91,6 +96,39 @@ const APP_SERVICE_MAP = {
   537: 'zdf', 536: 'zdf',
   298: 'rtl', 1771: 'rtl',
 };
+
+// ── WL-28: Dienstkatalog fuer die Verfuegbarkeit ─────────────────────────
+// Eine Quelle fuer die Frage "wo kann ich das ohne Zusatzkosten schauen?".
+// kind 'free'         = oeffentliche Mediathek, zaehlt immer, rangiert vor allem
+// kind 'subscription' = zaehlt nur, wenn er im Profil des Sync-Keys steht
+// tmdbIds             = TMDB-provider_id, gemessen (Messtabelle im Plan
+//                       outputs/plans/2026-09-28-wl-28-watchlist-bester-anbieter.md, Repo cowork)
+// search              = Such-Seite des Dienstes mit {q}; null → Link auf die
+//                       TMDB-Watch-Seite (nur fuer gemessene Vorlagen gesetzt)
+// Die Reihenfolge der 'free'-Eintraege ist ihre Rangfolge untereinander.
+const AVAILABILITY_SERVICES = [
+  { id: 'ard',       kind: 'free',         tmdbIds: [219],        search: null },
+  { id: 'zdf',       kind: 'free',         tmdbIds: [537, 536],   search: null },
+  { id: 'netflix',   kind: 'subscription', tmdbIds: [8],          search: null },
+  { id: 'prime',     kind: 'subscription', tmdbIds: [9, 119],     search: null },
+  { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: null },
+  { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: null },
+  { id: 'sky',       kind: 'subscription', tmdbIds: [30, 1773, 29], search: null },
+  { id: 'hbo',       kind: 'subscription', tmdbIds: [384, 1899],  search: null },
+  { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: null },
+  { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: null },
+  { id: 'joyn',      kind: 'subscription', tmdbIds: [304, 421],   search: null },
+  { id: 'rtl',       kind: 'subscription', tmdbIds: [2750],       search: null },
+];
+
+const AVAILABILITY_BY_TMDB = new Map();
+for (const svc of AVAILABILITY_SERVICES) {
+  for (const tid of svc.tmdbIds) AVAILABILITY_BY_TMDB.set(tid, svc);
+}
+
+// 50 Subrequests je Invocation: 1 KV (Profil) + je Titel 1 TMDB-Aufruf + Marge.
+const AVAILABILITY_BATCH_MAX = 40;
+const RENT_ONLY_NAMES_MAX = 3;
 
 const GENRE_MAP = {
   28: 'Action', 12: 'Abenteuer', 16: 'Animation', 35: 'Komoedie',
@@ -230,6 +268,18 @@ export default {
       }
       await kvPut(env, kvKey, JSON.stringify(body.items));
       return jsonResponse({ ok: true, count: body.items.length, timestamp: Date.now() });
+    }
+
+    if (url.pathname === '/tmdb/search' && request.method === 'GET') {
+      return handleTmdbSearch(env, url);
+    }
+
+    if (url.pathname === '/tmdb/details' && request.method === 'GET') {
+      return handleTmdbDetails(env, url);
+    }
+
+    if (url.pathname === '/availability' && request.method === 'POST') {
+      return handleAvailability(request, env, apiKey);
     }
 
     if (url.pathname === '/magazine' && request.method === 'GET') {
@@ -613,6 +663,123 @@ async function tmdbGet(path, params, env) {
     console.error(`TMDB ${path} error:`, err && err.message ? err.message : String(err));
     return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WL-27: TMDB fuer die App nur ueber den Worker — der Schluessel bleibt hier
+// ─────────────────────────────────────────────────────────────────────────
+
+function parseMediaRef(type, id) {
+  if (type !== 'movie' && type !== 'tv') return null;
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return { type, id: n };
+}
+
+async function handleTmdbSearch(env, url) {
+  const q = (url.searchParams.get('q') || '').trim();
+  if (!q || q.length > 200) return jsonResponse({ error: 'q required' }, 400);
+  const data = await tmdbGet('search/multi', { query: q, page: 1, include_adult: false }, env);
+  if (!data) return jsonResponse({ error: 'TMDB unavailable' }, 502);
+  const results = (data.results || [])
+    .filter((r) => r.media_type === 'movie' || r.media_type === 'tv')
+    .slice(0, 8);
+  return jsonResponse({ results });
+}
+
+async function handleTmdbDetails(env, url) {
+  const ref = parseMediaRef(url.searchParams.get('type'), url.searchParams.get('id'));
+  if (!ref) return jsonResponse({ error: 'type and id required' }, 400);
+  const data = await tmdbGet(`${ref.type}/${ref.id}`, null, env);
+  if (!data) return jsonResponse({ error: 'TMDB unavailable' }, 502);
+  return jsonResponse(data);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WL-28: bester Anbieter — nur Flat aus dem Profil oder freie Mediathek
+// ─────────────────────────────────────────────────────────────────────────
+
+// Profil je Sync-Key: geordnete Liste von Dienst-IDs (Abos). Fehlt es, zaehlen
+// alle Abo-Dienste des Katalogs in Katalog-Reihenfolge — Leihen/Kaufen nie.
+async function loadProviderProfile(env, syncKey) {
+  const raw = await kvGet(env, `config:providers:${syncKey}`, 'json');
+  const known = new Set(AVAILABILITY_SERVICES.filter((s) => s.kind === 'subscription').map((s) => s.id));
+  if (Array.isArray(raw)) {
+    const ordered = raw.filter((id) => known.has(id));
+    return { subscriptions: [...new Set(ordered)], fromKv: true };
+  }
+  return { subscriptions: [...known], fromKv: false };
+}
+
+function serviceLink(svc, title, ref) {
+  if (svc && svc.search && title) return svc.search.replace('{q}', encodeURIComponent(title));
+  return `https://www.themoviedb.org/${ref.type}/${ref.id}/watch?locale=DE`;
+}
+
+// Reine Funktion: TMDB results.DE + Profil → Urteil.
+function rankAvailability(de, profile, title, ref) {
+  const offered = new Set();
+  const names = new Map();
+  for (const list of [de && de.flatrate, de && de.free, de && de.ads]) {
+    for (const p of list || []) {
+      const svc = AVAILABILITY_BY_TMDB.get(p.provider_id);
+      if (svc) offered.add(svc.id);
+    }
+  }
+  const candidates = [];
+  for (const svc of AVAILABILITY_SERVICES) {
+    if (svc.kind === 'free' && offered.has(svc.id)) candidates.push({ svc, kind: 'free' });
+  }
+  for (const id of profile.subscriptions) {
+    if (offered.has(id)) {
+      const svc = AVAILABILITY_SERVICES.find((s) => s.id === id);
+      candidates.push({ svc, kind: 'flat' });
+    }
+  }
+  const toOut = (c) => ({ service: c.svc.id, kind: c.kind, link: serviceLink(c.svc, title, ref) });
+  const rentOnly = [];
+  if (candidates.length === 0) {
+    for (const list of [de && de.rent, de && de.buy]) {
+      for (const p of list || []) {
+        const svc = AVAILABILITY_BY_TMDB.get(p.provider_id);
+        const key = svc ? svc.id : `tmdb:${p.provider_id}`;
+        if (!names.has(key)) names.set(key, p.provider_name || key);
+      }
+    }
+    for (const n of names.values()) {
+      if (rentOnly.length >= RENT_ONLY_NAMES_MAX) break;
+      rentOnly.push(n);
+    }
+  }
+  return {
+    best: candidates.length ? toOut(candidates[0]) : null,
+    alternatives: candidates.slice(1).map(toOut),
+    rentOnly,
+    checkedAt: Date.now(),
+  };
+}
+
+async function handleAvailability(request, env, apiKey) {
+  let body;
+  try { body = await request.json(); } catch { body = null; }
+  const list = body && Array.isArray(body.items) ? body.items : null;
+  if (!list) return jsonResponse({ error: 'items must be an array' }, 400);
+  if (list.length > AVAILABILITY_BATCH_MAX) {
+    return jsonResponse({ error: `at most ${AVAILABILITY_BATCH_MAX} items` }, 400);
+  }
+  const profile = await loadProviderProfile(env, apiKey);
+  const results = {};
+  await Promise.all(list.map(async (it) => {
+    const ref = it && parseMediaRef(it.type, it.id);
+    if (!ref) return;
+    const key = `${ref.type}:${ref.id}`;
+    const data = await tmdbGet(`${ref.type}/${ref.id}/watch/providers`, null, env);
+    if (!data) { results[key] = { error: 'TMDB unavailable' }; return; }
+    const de = data.results && data.results.DE;
+    const title = typeof it.title === 'string' ? it.title.slice(0, 200) : '';
+    results[key] = rankAvailability(de, profile, title, ref);
+  }));
+  return jsonResponse({ results, profile: profile.fromKv ? 'kv' : 'default' });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
