@@ -96,7 +96,8 @@ const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
 //                       TMDB-Watch-Seite. Nur gemessene Vorlagen: Netflix, Magenta TV, Joyn,
 //                       Disney+ und Paramount+ am 2026-09-28 in Schollys Chrome. Sky Go hat keine
 //                       Web-Suche; sky.de/suche?query= durchsucht die Sky-Seiten (kann einen
-//                       verfuegbaren Titel verfehlen). HBO Max und RTL+ ohne belegte Vorlage.
+//                       verfuegbaren Titel verfehlen). RTL+ ?query= eingeloggt gemessen. HBO Max
+//                       nur Such-Seite: der Titel-Link war nur mit aktivem Abo pruefbar.
 // Die Reihenfolge der 'free'-Eintraege ist ihre Rangfolge untereinander.
 const AVAILABILITY_SERVICES = [
   { id: 'arte',      kind: 'free',         tmdbIds: [234],        search: 'https://www.arte.tv/de/search/?q={q}' },
@@ -109,11 +110,11 @@ const AVAILABILITY_SERVICES = [
   { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: 'https://www.disneyplus.com/de-de/browse/search' },
   { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: 'https://tv.apple.com/de/search?term={q}' },
   { id: 'sky',       kind: 'subscription', tmdbIds: [29],         search: 'https://www.sky.de/suche?query={q}' },
-  { id: 'hbo',       kind: 'subscription', tmdbIds: [1899],       search: null },
+  { id: 'hbo',       kind: 'subscription', tmdbIds: [1899],       search: 'https://play.hbomax.com/search' },
   { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: 'https://www.paramountplus.com/de/search/' },
   { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: 'https://web.magentatv.de/suche/vod_more_web/{q}' },
   { id: 'joyn',      kind: 'subscription', tmdbIds: [304, 421],   search: 'https://www.joyn.de/suche?q={q}' },
-  { id: 'rtl',       kind: 'subscription', tmdbIds: [2750],       search: null },
+  { id: 'rtl',       kind: 'subscription', tmdbIds: [2750],       search: 'https://plus.rtl.de/suche?query={q}' },
 ];
 
 const AVAILABILITY_BY_TMDB = new Map();
