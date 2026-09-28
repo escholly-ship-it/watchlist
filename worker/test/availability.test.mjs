@@ -81,3 +81,18 @@ test('zu viele Titel und fehlender Schluessel werden abgewiesen', async () => {
   const res = await worker.fetch(new Request('https://w/availability', { method: 'POST', body: '{}' }), env(null), {});
   assert.equal(res.status, 401);
 });
+
+test('Sterben-Fall: nur frei bei ARTE, Link auf die ARTE-Suche', async () => {
+  mockTmdb({ 1232781: { free: [p(234, 'Arte')], rent: [p(178, 'MagentaTV')] } });
+  const { body } = await avail(env(['magenta']), [{ type: 'movie', id: 1232781, title: 'Sterben' }]);
+  const r = body.results['movie:1232781'];
+  assert.equal(r.best.service, 'arte');
+  assert.equal(r.best.link, 'https://www.arte.tv/de/search/?q=Sterben');
+});
+
+test('WOW zaehlt nicht als Sky, Sky Go schon', async () => {
+  mockTmdb({ 6: { flatrate: [p(30, 'WOW')] }, 7: { flatrate: [p(29, 'Sky Go')] } });
+  const { body } = await avail(env(['sky']), [{ type: 'movie', id: 6, title: 'F' }, { type: 'movie', id: 7, title: 'G' }]);
+  assert.equal(body.results['movie:6'].best, null);
+  assert.equal(body.results['movie:7'].best.service, 'sky');
+});

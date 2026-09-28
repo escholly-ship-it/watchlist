@@ -101,20 +101,25 @@ const APP_SERVICE_MAP = {
 // Eine Quelle fuer die Frage "wo kann ich das ohne Zusatzkosten schauen?".
 // kind 'free'         = oeffentliche Mediathek, zaehlt immer, rangiert vor allem
 // kind 'subscription' = zaehlt nur, wenn er im Profil des Sync-Keys steht
-// tmdbIds             = TMDB-provider_id, gemessen (Messtabelle im Plan
-//                       outputs/plans/2026-09-28-wl-28-watchlist-bester-anbieter.md, Repo cowork)
+// tmdbIds             = TMDB-provider_id, gemessen 2026-09-28 per /watch/providers
+//                       (watch_region=DE); Messtabelle im Plan
+//                       outputs/plans/2026-09-28-wl-28-watchlist-bester-anbieter.md, Repo cowork.
+//                       Sky = nur Sky Go (29); WOW (30) zaehlt bewusst nicht.
 // search              = Such-Seite des Dienstes mit {q}; null → Link auf die
 //                       TMDB-Watch-Seite (nur fuer gemessene Vorlagen gesetzt)
 // Die Reihenfolge der 'free'-Eintraege ist ihre Rangfolge untereinander.
 const AVAILABILITY_SERVICES = [
-  { id: 'ard',       kind: 'free',         tmdbIds: [219],        search: null },
-  { id: 'zdf',       kind: 'free',         tmdbIds: [537, 536],   search: null },
-  { id: 'netflix',   kind: 'subscription', tmdbIds: [8],          search: null },
-  { id: 'prime',     kind: 'subscription', tmdbIds: [9, 119],     search: null },
+  { id: 'arte',      kind: 'free',         tmdbIds: [234],        search: 'https://www.arte.tv/de/search/?q={q}' },
+  { id: 'ard',       kind: 'free',         tmdbIds: [219],        search: 'https://www.ardmediathek.de/suche/{q}' },
+  { id: 'zdf',       kind: 'free',         tmdbIds: [537],        search: 'https://www.zdf.de/suche?q={q}' },
+  { id: '3sat',      kind: 'free',         tmdbIds: [2211],       search: 'https://www.3sat.de/suche?q={q}' },
+  { id: 'kika',      kind: 'free',         tmdbIds: [2081],       search: 'https://www.kika.de/suche?q={q}' },
+  { id: 'netflix',   kind: 'subscription', tmdbIds: [8, 1796],    search: null },
+  { id: 'prime',     kind: 'subscription', tmdbIds: [9, 2100],    search: 'https://www.primevideo.com/search/ref=atv_nb_sug?phrase={q}' },
   { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: null },
-  { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: null },
-  { id: 'sky',       kind: 'subscription', tmdbIds: [30, 1773, 29], search: null },
-  { id: 'hbo',       kind: 'subscription', tmdbIds: [384, 1899],  search: null },
+  { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: 'https://tv.apple.com/de/search?term={q}' },
+  { id: 'sky',       kind: 'subscription', tmdbIds: [29],         search: null },
+  { id: 'hbo',       kind: 'subscription', tmdbIds: [1899],       search: null },
   { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: null },
   { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: null },
   { id: 'joyn',      kind: 'subscription', tmdbIds: [304, 421],   search: null },
