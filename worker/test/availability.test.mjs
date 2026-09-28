@@ -105,8 +105,9 @@ test('Abo-Suchlinks: Netflix, Magenta TV, Joyn mit Titel, Disney+ nur Such-Seite
     7: { flatrate: [p(178, 'MagentaTV')] },
     8: { flatrate: [p(304, 'Joyn')] },
     9: { flatrate: [p(337, 'Disney+')] },
+    10: { flatrate: [p(29, 'Sky Go')] },
   });
-  const items = [6, 7, 8, 9].map((id) => ({ type: 'movie', id, title: 'Stranger Things' }));
+  const items = [6, 7, 8, 9, 10].map((id) => ({ type: 'movie', id, title: 'Stranger Things' }));
   const { body } = await avail(env(null), items);
   const best = (id) => body.results[`movie:${id}`].best;
   assert.equal(best(6).link, 'https://www.netflix.com/search?q=Stranger%20Things');
@@ -116,4 +117,6 @@ test('Abo-Suchlinks: Netflix, Magenta TV, Joyn mit Titel, Disney+ nur Such-Seite
   assert.equal(best(9).link, 'https://www.disneyplus.com/de-de/browse/search');
   assert.equal(best(9).direct, true);
   assert.equal(best(9).prefilled, false);
+  assert.equal(best(10).link, 'https://www.sky.de/suche?query=Stranger%20Things');
+  assert.equal(best(10).prefilled, true);
 });
