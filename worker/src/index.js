@@ -91,8 +91,11 @@ const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
 //                       (watch_region=DE); Messtabelle im Plan
 //                       outputs/plans/2026-09-28-wl-28-watchlist-bester-anbieter.md, Repo cowork.
 //                       Sky = nur Sky Go (29); WOW (30) zaehlt bewusst nicht.
-// search              = Such-Seite des Dienstes mit {q}; null → Link auf die
-//                       TMDB-Watch-Seite (nur fuer gemessene Vorlagen gesetzt)
+// search              = Such-Seite des Dienstes mit {q}; ohne {q} die leere Such-Seite
+//                       (Dienst nimmt keinen Titel-Parameter an); null → Link auf die
+//                       TMDB-Watch-Seite. Nur gemessene Vorlagen: Netflix, Magenta TV, Joyn,
+//                       Disney+ und Paramount+ am 2026-09-28 in Schollys Chrome; HBO Max,
+//                       Sky Go und RTL+ ohne belegte Vorlage (Login bzw. Consent-Wand).
 // Die Reihenfolge der 'free'-Eintraege ist ihre Rangfolge untereinander.
 const AVAILABILITY_SERVICES = [
   { id: 'arte',      kind: 'free',         tmdbIds: [234],        search: 'https://www.arte.tv/de/search/?q={q}' },
@@ -100,15 +103,15 @@ const AVAILABILITY_SERVICES = [
   { id: 'zdf',       kind: 'free',         tmdbIds: [537],        search: 'https://www.zdf.de/suche?q={q}' },
   { id: '3sat',      kind: 'free',         tmdbIds: [2211],       search: 'https://www.3sat.de/suche?q={q}' },
   { id: 'kika',      kind: 'free',         tmdbIds: [2081],       search: 'https://www.kika.de/suche?q={q}' },
-  { id: 'netflix',   kind: 'subscription', tmdbIds: [8, 1796],    search: null },
+  { id: 'netflix',   kind: 'subscription', tmdbIds: [8, 1796],    search: 'https://www.netflix.com/search?q={q}' },
   { id: 'prime',     kind: 'subscription', tmdbIds: [9, 2100],    search: 'https://www.primevideo.com/search/ref=atv_nb_sug?phrase={q}' },
-  { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: null },
+  { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: 'https://www.disneyplus.com/de-de/browse/search' },
   { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: 'https://tv.apple.com/de/search?term={q}' },
   { id: 'sky',       kind: 'subscription', tmdbIds: [29],         search: null },
   { id: 'hbo',       kind: 'subscription', tmdbIds: [1899],       search: null },
-  { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: null },
-  { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: null },
-  { id: 'joyn',      kind: 'subscription', tmdbIds: [304, 421],   search: null },
+  { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: 'https://www.paramountplus.com/de/search/' },
+  { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: 'https://web.magentatv.de/suche/vod_more_web/{q}' },
+  { id: 'joyn',      kind: 'subscription', tmdbIds: [304, 421],   search: 'https://www.joyn.de/suche?q={q}' },
   { id: 'rtl',       kind: 'subscription', tmdbIds: [2750],       search: null },
 ];
 
@@ -732,6 +735,7 @@ function rankAvailability(de, profile, title, ref) {
     kind: c.kind,
     link: serviceLink(c.svc, title, ref),
     direct: !!(c.svc.search && title),   // false → Link ist die TMDB-Watch-Seite
+    prefilled: !!(c.svc.search && title && c.svc.search.includes('{q}')),  // false → leere Such-Seite des Dienstes
   });
   const rentOnly = [];
   if (candidates.length === 0) {
