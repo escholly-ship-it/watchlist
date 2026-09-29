@@ -1158,7 +1158,7 @@ function createCard(item) {
       </div>
     </div>
     ${svc
-      ? (pinned ? `<div class="card-marker-row">${svcMarkerHtml(svc)}<span class="card-pin-tag">${PIN_ICON}manuell</span></div>` : svcMarkerHtml(svc))
+      ? (pinned ? `<div class="card-marker-row">${svcMarkerHtml(svc)}<span class="card-pin-tag">${PIN_ICON}<span class="card-pin-text">manuell</span></span></div>` : svcMarkerHtml(svc))
       : (item.serviceId == null ? `<div class="card-badge-vorgemerkt">${vorgemerktBadgeText(item)}</div>` : '')}
   `;
 
@@ -1591,6 +1591,15 @@ function closePinSheet() {
   pinPrevFocus = null;
 }
 
+// Die Karten werden neu gezeichnet, waehrend die Detailansicht offen ist: den
+// gemerkten Opener auf die neue Karte umhaengen, sonst faellt der Fokus beim
+// Schliessen auf body (qa#1-Hinweis b).
+function refocusOpenerCard(item) {
+  if (lastFocused && lastFocused.isConnected) return;
+  const card = document.querySelector(`.card[data-id="${CSS.escape(item.id)}"]`);
+  if (card) lastFocused = card;
+}
+
 function pinService(item, id) {
   if (!SERVICES.some(s => s.id === id)) return;
   item.pinnedServiceId = id;
@@ -1601,6 +1610,7 @@ function pinService(item, id) {
   renderFilterBar();
   renderShortlist();
   renderWatchlist();
+  refocusOpenerCard(item);
 }
 
 // Pin loesen: sofort nach dem zuletzt geprueften Stand einstufen (WL-28-Regeln).
@@ -1613,6 +1623,7 @@ function unpinService(item) {
   renderFilterBar();
   renderShortlist();
   renderWatchlist();
+  refocusOpenerCard(item);
   const $pin = document.querySelector('#detailPinSlot .btn-pin');
   if ($pin) $pin.focus();
 }

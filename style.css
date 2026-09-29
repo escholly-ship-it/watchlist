@@ -2193,13 +2193,18 @@ body.mag-open { overflow: hidden; }
 }
 .card-pin-tag {
   height: 18px;
-  padding: 0 6px;
+  padding: 0 4px;
+  gap: 2px;
   font-size: 0.5625rem;
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-  min-width: 0;
-  overflow: hidden;
+  flex-shrink: 0;
 }
 .card-pin-tag .pin-icon { width: 10px; height: 10px; flex-shrink: 0; }
+/* qa#1: unter 360 px Viewport reicht die Kartenbreite nicht fuer das Wort —
+   dort bleibt das Pin-Symbol; das aria-label der Karte nennt den Pin */
+@media (max-width: 359px) {
+  .card-pin-text { display: none; }
+}
 
 /* Detail: Kopf mit Badge und Merkmal */
 .detail-head {
