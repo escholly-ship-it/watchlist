@@ -2153,3 +2153,191 @@ body.mag-open { overflow: hidden; }
   justify-content: center;
   gap: 7px;
 }
+
+/* ============================================
+   WL-30 — Dienst von Hand setzen (Pin)
+   Design: Claude-Design-Vorlage WL-30, "Design Ok" 29.09.2026
+   ============================================ */
+
+/* Merkmal "manuell": dieselbe Orange-Pille wie "Vorgemerkt" */
+.card-pin-tag,
+.detail-pin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--tertiary);
+  color: #3a2410;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Karte: Logo-Kachel und Merkmal in einer Reihe — faellt das Logo auf den
+   Text-Badge zurueck, rueckt das Merkmal mit, statt ihn zu ueberdecken */
+.card-marker-row {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+.card-marker-row .service-logo,
+.card-marker-row .service-badge {
+  position: static;
+  flex-shrink: 0;
+}
+.card-pin-tag {
+  height: 18px;
+  padding: 0 4px;
+  gap: 2px;
+  font-size: 0.5625rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  flex-shrink: 0;
+}
+.card-pin-tag .pin-icon { width: 10px; height: 10px; flex-shrink: 0; }
+/* qa#1: unter 360 px Viewport reicht die Kartenbreite nicht fuer das Wort —
+   dort bleibt das Pin-Symbol; das aria-label der Karte nennt den Pin */
+@media (max-width: 359px) {
+  .card-pin-text { display: none; }
+}
+
+/* Detail: Kopf mit Badge und Merkmal */
+.detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.detail-head:empty { display: none; }
+.detail-head .detail-service-badge { margin-bottom: 0; }
+.detail-head:not(:empty) { margin-bottom: var(--space-2); }
+.detail-pin-tag {
+  padding: 4px 10px;
+  font-size: var(--fs-2xs);
+}
+.detail-pin-tag .pin-icon { width: 11px; height: 11px; }
+
+.detail-pin-note {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  margin-bottom: var(--space-3);
+}
+
+/* Slots ohne eigene Box: leer erzeugen sie keinen Abstand in .detail-actions */
+.detail-pin-slot { display: contents; }
+
+.btn-pin {
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: 1px solid var(--primary);
+  background: rgba(77, 142, 255, 0.12);
+  color: var(--primary-light);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  transition: background 0.15s;
+}
+.btn-pin:hover { background: rgba(77, 142, 255, 0.2); }
+
+.btn-unpin {
+  min-height: 44px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--primary-light);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-unpin:hover { background: var(--surface-4); }
+
+.btn-pin:focus-visible,
+.btn-unpin:focus-visible,
+.pin-chip:focus-visible,
+.pin-cancel:focus-visible {
+  outline: 2px solid var(--primary-light);
+  outline-offset: 2px;
+}
+
+/* Pin-Sheet: unten angedockt wie das Filter-Sheet */
+.pin-sheet {
+  background: var(--surface-6);
+  padding: var(--space-5) 20px calc(var(--safe-bottom) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.pin-sheet-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.pin-sheet-head h2 {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text);
+}
+.pin-sheet-head p {
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.pin-group-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.pin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.pin-chip {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: var(--surface-4);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  min-width: 0;
+}
+.pin-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin-chip .svc-inline-logo { width: 24px; height: 24px; }
+.pin-chip:hover { background: var(--surface-5); }
+.pin-chip.is-current { border-color: var(--primary); }
+.pin-cancel {
+  min-height: 44px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.pin-cancel:hover { background: var(--surface-5); }
