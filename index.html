@@ -176,6 +176,21 @@
       </div>
     </div>
 
+    <!-- Pin-Sheet (WL-30): Dienst von Hand setzen; liegt ueber der Detailansicht -->
+    <div class="modal-overlay sheet" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinModalTitle">
+      <div class="modal pin-sheet">
+        <div class="pin-sheet-head">
+          <h2 id="pinModalTitle">Wo siehst du es?</h2>
+          <p>Der Dienst bleibt, auch wenn die automatische Prüfung ihn nicht findet.</p>
+        </div>
+        <div class="pin-group-label">Deine Abos</div>
+        <div class="pin-grid" id="pinGridAbo"></div>
+        <div class="pin-group-label">Mediatheken</div>
+        <div class="pin-grid" id="pinGridFree"></div>
+        <button class="pin-cancel" id="pinCancel" type="button">Abbrechen</button>
+      </div>
+    </div>
+
     <!-- Wochen-Magazin Reader (WL-5) -->
     <div class="magazine-reader hidden" id="magazineReader" role="dialog" aria-label="Wochen-Magazin">
       <div class="magazine-reader-top">

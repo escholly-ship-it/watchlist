@@ -75,6 +75,36 @@ const SERVICES = [
   { id: 'kika',      name: 'KiKA',        color: '#6cb33f', tmdbIds: [2081],        logo: '/duwuE5tiQeoLsFEAVWUTwpfnBJw.png', free: true },
 ];
 
+// WL-30: Kopie der Such-Vorlagen aus worker/src/index.js (AVAILABILITY_SERVICES[].search).
+// Gebraucht nur fuer einen von Hand gesetzten Dienst, zu dem der Worker keinen Link
+// liefert (TMDB kennt dort kein Angebot). Aendert sich eine Vorlage im Worker: hier nachziehen.
+const SERVICE_SEARCH = {
+  arte: 'https://www.arte.tv/de/search/?q={q}',
+  ard: 'https://www.ardmediathek.de/suche/{q}',
+  zdf: 'https://www.zdf.de/suche?q={q}',
+  '3sat': 'https://www.3sat.de/suche?q={q}',
+  kika: 'https://www.kika.de/suche?q={q}',
+  netflix: 'https://www.netflix.com/search?q={q}',
+  prime: 'https://www.primevideo.com/search/ref=atv_nb_sug?phrase={q}',
+  disney: 'https://www.disneyplus.com/de-de/browse/search',
+  apple: 'https://tv.apple.com/de/search?term={q}',
+  sky: 'https://www.sky.de/suche?query={q}',
+  hbo: 'https://play.hbomax.com/search',
+  paramount: 'https://www.paramountplus.com/de/search/',
+  magenta: 'https://web.magentatv.de/suche/vod_more_web/{q}',
+  joyn: 'https://www.joyn.de/suche?q={q}',
+  rtl: 'https://plus.rtl.de/suche?query={q}',
+};
+
+// WL-30: von Hand gesetzter Dienst ("Ich sehe es bei …"). Feld pinnedServiceId im
+// Item, laeuft mit dem Sync; aeltere Clients lassen es stehen. Unbekannte IDs zaehlen nicht.
+function pinnedService(item) {
+  const id = item && item.pinnedServiceId;
+  return id && SERVICES.some(s => s.id === id) ? id : null;
+}
+
+const PIN_ICON = '<svg class="pin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><line x1="12" y1="13" x2="12" y2="21"/></svg>';
+
 // WL-24: eine Quelle fuer den Anbieter-Marker auf Karten — Logo-Kachel,
 // bei fehlendem Logo direkt der Text-Badge.
 function svcMarkerHtml(svc) {
@@ -215,6 +245,7 @@ function saveUiState() {
 }
 const $addModal = document.getElementById('addModal');
 const $detailModal = document.getElementById('detailModal');
+const $pinModal = document.getElementById('pinModal');
 const $searchInput = document.getElementById('searchInput');
 const $searchClear = document.getElementById('searchClear');
 const $searchResults = document.getElementById('searchResults');
@@ -1109,9 +1140,10 @@ function createCard(item) {
   card.dataset.id = item.id;
   card.setAttribute('tabindex', '0');
   card.setAttribute('role', 'button');
-  card.setAttribute('aria-label', `${esc(item.title)} öffnen`);
-
   const svc = SERVICES.find(s => s.id === item.serviceId);
+  // WL-30: Merkmal "manuell", wenn der gezeigte Dienst von Hand gesetzt ist
+  const pinned = !!svc && pinnedService(item) === svc.id;
+  card.setAttribute('aria-label', `${esc(item.title)} öffnen${pinned ? ', Dienst von dir gesetzt' : ''}`);
 
   card.innerHTML = `
     ${item.poster
@@ -1126,7 +1158,7 @@ function createCard(item) {
       </div>
     </div>
     ${svc
-      ? svcMarkerHtml(svc)
+      ? (pinned ? `<div class="card-marker-row">${svcMarkerHtml(svc)}<span class="card-pin-tag">${PIN_ICON}manuell</span></div>` : svcMarkerHtml(svc))
       : (item.serviceId == null ? `<div class="card-badge-vorgemerkt">${vorgemerktBadgeText(item)}</div>` : '')}
   `;
 
@@ -1339,7 +1371,7 @@ async function openDetail(item) {
   $closeBtn.onclick = closeDetailModal;
 
   $content.innerHTML = `
-    ${detailServiceBadgeHtml(svc)}
+    <div class="detail-head" id="detailHead">${detailHeadHtml(item, svc)}</div>
     <h2 class="detail-title" id="detailModalTitle">${esc(item.title)}</h2>
     <div class="detail-meta">
       ${ratingPct ? `<span class="detail-match">${ratingPct}% Match</span>` : ''}
@@ -1348,9 +1380,11 @@ async function openDetail(item) {
       <span>${item.type === 'tv' ? 'Serie' : 'Film'}</span>
     </div>
     ${item.overview ? `<p class="detail-overview">${esc(item.overview)}</p>` : ''}
+    <div id="detailPinNote"></div>
     <div id="detailProviders"></div>
     <div class="detail-actions">
       ${detailCtaHtml(item, svc)}
+      <div class="detail-pin-slot" id="detailPinSlot"></div>
       <div class="detail-actions-row">
         ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
           ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
@@ -1360,6 +1394,7 @@ async function openDetail(item) {
         </button>
         <button class="btn-remove" data-id="${item.id}">Entfernen</button>
       </div>
+      <div class="detail-pin-slot" id="detailUnpinSlot"></div>
       <div class="detail-source">
         <span>Verfügbarkeit: JustWatch</span>
         <a href="${tmdbWatchUrl(item)}" target="_blank" rel="noopener" aria-label="${item.serviceId ? 'Auf TMDB ansehen' : 'Angebote auf TMDB'} (öffnet neuen Tab)">${item.serviceId ? 'Auf TMDB ansehen' : 'Angebote auf TMDB'} ↗</a>
@@ -1406,6 +1441,8 @@ async function openDetail(item) {
     renderWatchlist();
   });
 
+  refreshDetailPin(item);
+
   $detailModal.classList.add('open');
   openOverlay($detailModal, () => $closeBtn.focus());
 
@@ -1426,24 +1463,41 @@ async function openDetail(item) {
   }
 
   // WL-28: frischer Stand gilt — bester Anbieter, oder vorgemerkt ohne Angebot.
-  // Badge-Quelle wie beim Erst-Render (WL-25).
+  // WL-30: ein von Hand gesetzter Dienst bleibt (applyProviders).
   const change = applyProviders(item, providers);
   if (change) saveItems();
   else saveItemsLocal();  // nur checkedAt neu — kein PUT /sync je Oeffnen
+  $providers.dataset.loaded = '1';
+  refreshDetailPin(item);
   if (change && change !== 'updated') {
-    svc = SERVICES.find(s => s.id === item.serviceId);
-    const $hb = $content.querySelector('.detail-service-badge');
-    if (svc) {
-      if ($hb) $hb.outerHTML = detailServiceBadgeHtml(svc);
-      else $content.insertAdjacentHTML('afterbegin', detailServiceBadgeHtml(svc));
-    } else if ($hb) {
-      $hb.remove();
-    }
     renderFilterBar();
     renderWatchlist();
   }
+}
 
-  // Render provider badges — WL-28: getrennt nach freier Mediathek und Abo
+// WL-30: Kopf der Detailansicht — Dienst-Badge, bei Pin mit Merkmal "manuell".
+function detailHeadHtml(item, svc) {
+  if (!svc) return '';
+  const tag = pinnedService(item) === svc.id
+    ? `<span class="detail-pin-tag">${PIN_ICON}manuell</span>` : '';
+  return detailServiceBadgeHtml(svc) + tag;
+}
+
+// WL-30: Hinweis, warum der Dienst bleibt — je nach dem, was JustWatch fuer DE kennt.
+function pinNoteText(item) {
+  const id = pinnedService(item);
+  const name = SERVICES.find(s => s.id === id)?.name || id;
+  const flat = item.providers?.flat || [];
+  if (flat.includes(id)) return `Von dir gesetzt: ${name}. JustWatch führt den Titel dort ebenfalls.`;
+  if (flat.length === 0) return `Von dir gesetzt: ${name}. JustWatch kennt für Deutschland kein Streaming-Angebot bei deinen Diensten, die automatische Prüfung ändert den Dienst deshalb nicht.`;
+  return `Von dir gesetzt: ${name}. JustWatch führt den Titel für Deutschland bei einem anderen deiner Dienste, die automatische Prüfung ändert deinen Dienst trotzdem nicht.`;
+}
+
+// Anbieter-Liste der Detailansicht aus item.providers — WL-28: getrennt nach
+// freier Mediathek und Abo.
+function detailProvidersHtml(item) {
+  const providers = item.providers || EMPTY_PROVIDERS;
+  const pinned = !item.watched && pinnedService(item);
   let providerHtml = '';
   const chip = (svcId) => {
     const s = SERVICES.find(x => x.id === svcId);
@@ -1467,18 +1521,100 @@ async function openDetail(item) {
     providerHtml += `<div class="detail-provider-type">In deinen Abos:</div><div class="detail-providers">${aboIds.map(chip).join('')}</div>`;
   }
 
+  // WL-30: bei Pin sagt die Hinweiszeile, was JustWatch kennt — keine Warnung doppelt
   if (providers.flat.length === 0 && (providers.rentOnly || []).length > 0) {
-    const waitNote = item.watched ? '' : ' Kein Abo und keine Mediathek hat den Titel gerade, er bleibt vorgemerkt und wird bei jedem Öffnen der App neu geprüft.';
+    const waitNote = item.watched || pinned ? '' : ' Kein Abo und keine Mediathek hat den Titel gerade, er bleibt vorgemerkt und wird bei jedem Öffnen der App neu geprüft.';
     providerHtml += `<div class="availability-info not-found" style="margin-top:8px">Nur leihbar: ${esc(providers.rentOnly.join(', '))}.${waitNote}</div>`;
-  } else if (providers.flat.length === 0) {
+  } else if (providers.flat.length === 0 && !pinned) {
     providerHtml += `<div class="availability-info not-found" style="margin-top:8px">⚠ Aktuell keine Streaming-Verfügbarkeit in DE gefunden</div>`;
   }
+  return providerHtml;
+}
 
-  // CTA an den frisch geprueften Stand anpassen
+// WL-30: alles, was am Pin haengt, neu zeichnen — Kopf, Hinweis, CTA, Pin-Knoepfe
+// und (nach der Pruefung) die Anbieter-Liste. Liest nur item.
+function refreshDetailPin(item) {
+  const $content = document.getElementById('detailContent');
+  if (!$content) return;
+  const svc = SERVICES.find(s => s.id === item.serviceId);
+  const pinned = pinnedService(item);
+  const open = !item.watched;
+  const $head = $content.querySelector('#detailHead');
+  if ($head) $head.innerHTML = detailHeadHtml(item, svc);
+  const $note = $content.querySelector('#detailPinNote');
+  if ($note) $note.innerHTML = open && pinned ? `<div class="detail-pin-note">${esc(pinNoteText(item))}</div>` : '';
   const $cta = $content.querySelector('.btn-primary-cta, .detail-cta-slot');
   if ($cta) $cta.outerHTML = detailCtaHtml(item, svc);
+  const $pinSlot = $content.querySelector('#detailPinSlot');
+  if ($pinSlot) {
+    $pinSlot.innerHTML = open && !pinned ? `<button class="btn-pin" type="button">${PIN_ICON}Ich sehe es bei …</button>` : '';
+    const $b = $pinSlot.querySelector('.btn-pin');
+    if ($b) $b.addEventListener('click', () => openPinSheet(item));
+  }
+  const $unpinSlot = $content.querySelector('#detailUnpinSlot');
+  if ($unpinSlot) {
+    $unpinSlot.innerHTML = open && pinned ? '<button class="btn-unpin" type="button">Automatisch prüfen lassen</button>' : '';
+    const $b = $unpinSlot.querySelector('.btn-unpin');
+    if ($b) $b.addEventListener('click', () => unpinService(item));
+  }
+  const $providers = $content.querySelector('#detailProviders');
+  if ($providers && $providers.dataset.loaded) $providers.innerHTML = detailProvidersHtml(item);
+}
 
-  $providers.innerHTML = providerHtml;
+// ---- Pin-Sheet (WL-30) ----
+let pinItem = null;
+let pinPrevFocus = null;  // Opener der Detailansicht — ueberlebt das Sheet
+
+function pinChipHtml(s, current) {
+  return `<button class="pin-chip${current === s.id ? ' is-current' : ''}" type="button" data-svc="${s.id}">${svcInlineLogoHtml(s)}<span>${esc(s.name)}</span></button>`;
+}
+
+function openPinSheet(item) {
+  pinItem = item;
+  const current = pinnedService(item) || item.serviceId;
+  document.getElementById('pinGridAbo').innerHTML = SERVICES.filter(s => !s.free).map(s => pinChipHtml(s, current)).join('');
+  document.getElementById('pinGridFree').innerHTML = SERVICES.filter(s => s.free).map(s => pinChipHtml(s, current)).join('');
+  pinPrevFocus = lastFocused;
+  $pinModal.classList.add('open');
+  openOverlay($pinModal, () => { const c = $pinModal.querySelector('.pin-chip'); if (c) c.focus(); });
+}
+
+function closePinSheet() {
+  $pinModal.classList.remove('open');
+  closeOverlay($pinModal);
+  pinItem = null;
+  // Detailansicht ist noch offen: Hintergrund bleibt inert, ihr Opener bleibt gemerkt
+  if ($detailModal.classList.contains('open')) {
+    setBackgroundInert(true);
+    lastFocused = pinPrevFocus;
+  }
+  pinPrevFocus = null;
+}
+
+function pinService(item, id) {
+  if (!SERVICES.some(s => s.id === id)) return;
+  item.pinnedServiceId = id;
+  item.serviceId = id;
+  item.updatedAt = Date.now();
+  saveItems();
+  refreshDetailPin(item);
+  renderFilterBar();
+  renderShortlist();
+  renderWatchlist();
+}
+
+// Pin loesen: sofort nach dem zuletzt geprueften Stand einstufen (WL-28-Regeln).
+function unpinService(item) {
+  delete item.pinnedServiceId;
+  item.updatedAt = Date.now();
+  applyProviders(item, item.providers || { ...EMPTY_PROVIDERS });
+  saveItems();
+  refreshDetailPin(item);
+  renderFilterBar();
+  renderShortlist();
+  renderWatchlist();
+  const $pin = document.querySelector('#detailPinSlot .btn-pin');
+  if ($pin) $pin.focus();
 }
 
 function closeDetailModal() {
@@ -1601,13 +1737,28 @@ function bindEvents() {
     renderWatchlist();
   });
 
-  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Detail > Add).
+  // WL-30: Pin-Sheet — Tipp daneben oder "Abbrechen" schliesst, ein Dienst pinnt
+  $pinModal.addEventListener('click', (e) => {
+    if (e.target === $pinModal) { closePinSheet(); return; }
+    const chip = e.target.closest('.pin-chip');
+    if (chip && pinItem) {
+      const item = pinItem;
+      closePinSheet();
+      pinService(item, chip.dataset.svc);
+      const $unpin = document.querySelector('#detailUnpinSlot .btn-unpin');
+      if ($unpin) $unpin.focus();
+    }
+  });
+  document.getElementById('pinCancel').addEventListener('click', closePinSheet);
+
+  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Pin > Detail > Add).
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const $reader = document.getElementById('magazineReader');
       if ($reader && !$reader.classList.contains('hidden')) closeMagazineReader();
       else if ($filterModal.classList.contains('open')) closeFilterSheet();
       else if ($magazineModal.classList.contains('open')) closeMagazineModal();
+      else if ($pinModal.classList.contains('open')) closePinSheet();
       else if ($detailModal.classList.contains('open')) closeDetailModal();
       else if ($addModal.classList.contains('open')) closeAddModal();
     }
@@ -1957,12 +2108,15 @@ function addVorgemerkt(data) {
 // WL-28: frisch gepruefte Anbieter auf ein Item anwenden. Bleibt der gewaehlte
 // Dienst ohne Zusatzkosten verfuegbar, bleibt er (manuelle Wahl respektiert);
 // sonst gilt der beste. Ohne Angebot → vorgemerkt (serviceId null).
-// Rueckgabe: 'promoted' | 'changed' | 'demoted' | null. Mutiert das Item.
+// WL-30: ein von Hand gesetzter Dienst gilt unabhaengig vom Urteil — nie 'demoted';
+// hat ein aelterer Client ihn zurueckgestuft, stellt der naechste Lauf ihn wieder her.
+// Rueckgabe: 'promoted' | 'changed' | 'demoted' | 'updated' | null. Mutiert das Item.
 function applyProviders(item, providers) {
   const before = item.serviceId ?? null;
   let next = before;
   if (!item.watched) {
-    next = providers.flat.includes(before) ? before : (providers.flat[0] || null);
+    const pinned = pinnedService(item);
+    next = pinned || (providers.flat.includes(before) ? before : (providers.flat[0] || null));
   }
   const strip = (p) => JSON.stringify({ ...(p || {}), checkedAt: 0 });
   const changedProviders = strip(item.providers) !== strip(providers);
@@ -1988,10 +2142,17 @@ function tmdbWatchUrl(item) {
 // zur TMDB-Watch-Seite, statt "Bei <Dienst> ansehen" zu versprechen.
 function detailCtaHtml(item, svc) {
   if (!svc) return '<span class="detail-cta-slot"></span>';
-  const direct = !!item.providers?.direct?.[svc.id];
-  const link = direct ? item.providers.links[svc.id] : tmdbWatchUrl(item);
+  let direct = !!item.providers?.direct?.[svc.id];
+  let link = direct ? item.providers.links[svc.id] : tmdbWatchUrl(item);
   // Such-Seite ohne Titel-Parameter (Disney+, Paramount+): ehrlich "suchen"
-  const prefilled = direct && item.providers?.prefilled?.[svc.id] !== false;
+  let prefilled = direct && item.providers?.prefilled?.[svc.id] !== false;
+  // WL-30: von Hand gesetzter Dienst ohne Worker-Link → eigene Kopie der Such-Vorlage
+  if (!direct && pinnedService(item) === svc.id && SERVICE_SEARCH[svc.id]) {
+    const tpl = SERVICE_SEARCH[svc.id];
+    link = tpl.replace('{q}', encodeURIComponent(item.title || ''));
+    direct = true;
+    prefilled = tpl.includes('{q}');
+  }
   const label = !direct ? `${svc.name}-Angebot auf TMDB` : prefilled ? `Bei ${svc.name} ansehen` : `Bei ${svc.name} suchen`;
   return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="${escAttr(label)} (öffnet neuen Tab)">
         <span aria-hidden="true">▶</span> ${esc(label)} <span class="btn-cta-ext" aria-hidden="true">↗</span>
@@ -2025,7 +2186,8 @@ async function resolveVorgemerkt() {
     if (!p) continue;
     const r = applyProviders(item, p);
     touched = true;
-    if (r === 'promoted' && promoted++ === 0) {
+    // WL-30: ein wiederhergestellter Pin ist keine neue Verfuegbarkeit — kein Toast
+    if (r === 'promoted' && !pinnedService(item) && promoted++ === 0) {
       const svc = SERVICES.find(s => s.id === item.serviceId);
       showAutoAddToast(`„${item.title}" jetzt bei ${svc ? svc.name : 'einem Anbieter'}`, 'info');
     }
