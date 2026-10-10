@@ -1,25 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1c1c30"/>
-      <stop offset="100%" stop-color="#0a0a14"/>
+    <linearGradient id="b-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4d8eff"/>
+      <stop offset="100%" stop-color="#0f2f6e"/>
     </linearGradient>
-    <linearGradient id="red" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff1a2d"/>
-      <stop offset="100%" stop-color="#b80710"/>
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#e50914" flood-opacity="0.35"/>
+    <filter id="b-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#001a40" flood-opacity="0.45"/>
     </filter>
   </defs>
-  <!-- Background -->
-  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
-  <rect x="2" y="2" width="508" height="508" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
-  <!-- Play button left -->
-  <polygon points="120,160 280,256 120,352" fill="url(#red)" filter="url(#glow)"/>
-  <polygon points="140,182 255,256 140,330" fill="#ffffff" opacity="0.07"/>
-  <!-- Three horizontal lines (queue/list) right side -->
-  <line x1="310" y1="200" x2="420" y2="200" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
-  <line x1="310" y1="256" x2="400" y2="256" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
-  <line x1="310" y1="312" x2="380" y2="312" stroke="#e5e5e5" stroke-width="10" stroke-linecap="round" opacity="0.3"/>
+  <rect width="512" height="512" rx="108" fill="url(#b-bg)"/>
+  <rect x="2" y="2" width="508" height="508" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2"/>
+  <polygon points="120,160 280,256 120,352" fill="#f2f5ff" filter="url(#b-shadow)"/>
+  <line x1="310" y1="200" x2="420" y2="200" stroke="#f2f5ff" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+  <line x1="310" y1="256" x2="400" y2="256" stroke="#f2f5ff" stroke-width="10" stroke-linecap="round" opacity="0.65"/>
+  <line x1="310" y1="312" x2="380" y2="312" stroke="#f2f5ff" stroke-width="10" stroke-linecap="round" opacity="0.4"/>
 </svg>
