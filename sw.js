@@ -1,0 +1,137 @@
+/* ============================================
+   WATCHLIST — Service Worker (Offline App Shell + Runtime Cache)
+   ============================================ */
+
+const CACHE_VERSION = 'v1';
+const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
+
+const APP_SHELL_ASSETS = [
+  './',
+  './index.html',
+  './style.css',
+  './app.js',
+  './manifest.json',
+  './favicon-16.png',
+  './favicon-32.png',
+  './icon-192.png',
+  './icon-512.png',
+  './icon.svg',
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL_ASSETS))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== SHELL_CACHE && key !== RUNTIME_CACHE)
+          .map((key) => caches.delete(key))
+      )
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // 1. Navigation requests (e.g. / or /?key=...) -> Network-first, fallback to cached index.html
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(SHELL_CACHE).then((cache) => cache.put('./index.html', copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cache = await caches.open(SHELL_CACHE);
+          return (
+            (await cache.match('./index.html', { ignoreSearch: true })) ||
+            (await cache.match('./', { ignoreSearch: true }))
+          );
+        })
+    );
+    return;
+  }
+
+  // 2. Same-origin static assets (CSS, JS, Icons, Manifest) -> Stale-While-Revalidate
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      caches.open(SHELL_CACHE).then(async (cache) => {
+        const cached = await cache.match(request, { ignoreSearch: true });
+        const networkPromise = fetch(request)
+          .then((response) => {
+            if (response && response.ok) {
+              cache.put(request, response.clone());
+            }
+            return response;
+          })
+          .catch(() => null);
+
+        return cached || (await networkPromise) || new Response('', { status: 504 });
+      })
+    );
+    return;
+  }
+
+  // 3. Google Fonts & TMDB Poster/Logo images -> Cache-First (with background populate)
+  if (
+    url.hostname === 'fonts.googleapis.com' ||
+    url.hostname === 'fonts.gstatic.com' ||
+    url.hostname === 'image.tmdb.org'
+  ) {
+    event.respondWith(
+      caches.open(RUNTIME_CACHE).then(async (cache) => {
+        const cached = await cache.match(request);
+        if (cached) return cached;
+        try {
+          const response = await fetch(request);
+          if (response && (response.ok || response.type === 'opaque')) {
+            cache.put(request, response.clone());
+          }
+          return response;
+        } catch (_) {
+          return new Response('', { status: 504 });
+        }
+      })
+    );
+    return;
+  }
+
+  // 4. Worker GET requests (/sync, /magazine) -> Network-First with runtime cache fallback for offline reading
+  if (url.hostname.endsWith('.workers.dev')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.open(RUNTIME_CACHE).then((c) => c.match(request));
+          return (
+            cached ||
+            new Response(JSON.stringify({ error: 'Offline' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        })
+    );
+  }
+});

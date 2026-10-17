@@ -148,7 +148,6 @@ const MEDIUM_THRESHOLD = 0.35;  // User-Decision 2026-05-14
 const TASTE_SAMPLE_SIZE = 15;
 const TASTE_PREWARM_SAMPLE_SIZE = 30;
 const TASTE_CACHE_TTL_DAYS = 8;
-const TELEGRAM_CHUNK_LIMIT = 4000;
 
 // Original-language preference (Scholly watches OV only).
 const PREFERRED_LANGUAGES = new Set(['en', 'de', 'sv']);
@@ -531,7 +530,6 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
     if (neuItems.length === 0 && upItems.length === 0 && entdecktItems.length === 0) {
       const msg = 'Magazin diese Woche übersprungen — keine passenden Titel gefunden.';
       note(msg);
-      if (!dryRun) await postTelegram(`⚠️ ${msg}`, env);
       return {
         ok: false, source, skipped: true, message: msg, kills, capped: ceilingHit,
         subrequests: { tmdb: tmdbCalls, kv: kvCalls, total: tmdbCalls + kvCalls },
@@ -592,13 +590,6 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
     };
   } catch (err) {
     console.error('Magazine pipeline error:', err);
-    if (!dryRun) {
-      try {
-        await postTelegram(`⚠️ Wochen-Magazin Fehler: ${err.message || err}`, env);
-      } catch (postErr) {
-        console.error('Failed to post error to Telegram:', postErr);
-      }
-    }
     return { ok: false, source, error: String(err), log, elapsedMs: Date.now() - startedAt };
   }
 }
@@ -1369,53 +1360,6 @@ function pickFanOf(c, tasteSample) {
   return bestOverlap >= minOverlap ? best.title : null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Telegram sender — HTML mode, chunked at paragraph boundaries
-// ─────────────────────────────────────────────────────────────────────────
-
-async function postTelegram(text, env) {
-  const chunks = splitTelegramMessage(text, TELEGRAM_CHUNK_LIMIT);
-  for (let i = 0; i < chunks.length; i++) {
-    const resp = await fetch(
-      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: env.TELEGRAM_CHAT_ID,
-          text: chunks[i],
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
-      },
-    );
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`Telegram ${resp.status}: ${body.slice(0, 200)}`);
-    }
-    if (chunks.length > 1 && i < chunks.length - 1) {
-      await sleep(500);
-    }
-  }
-}
-
-function splitTelegramMessage(message, maxLen) {
-  if (message.length <= maxLen) return [message];
-  const chunks = [];
-  const blocks = message.split('\n\n');
-  let current = '';
-  for (const block of blocks) {
-    const candidate = current ? `${current}\n\n${block}` : block;
-    if (candidate.length <= maxLen) {
-      current = candidate;
-    } else {
-      if (current) chunks.push(current);
-      current = block;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Utilities

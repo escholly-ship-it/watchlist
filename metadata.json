@@ -1,0 +1,5 @@
+{
+  "name": "Watchlist — Deine Streaming-Watchlist",
+  "description": "Alle Streaming-Dienste, eine Watchlist. Netflix, Prime, Disney+, Sky und mehr — kostenlose PWA.",
+  "requestFramePermissions": []
+}

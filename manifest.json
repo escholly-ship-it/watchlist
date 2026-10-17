@@ -1,9 +1,10 @@
 {
+  "id": "./",
   "name": "Watchlist",
   "short_name": "Watchlist",
   "description": "Deine persönliche Streaming-Watchlist",
-  "start_url": "/watchlist/",
-  "scope": "/watchlist/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0b1326",
   "theme_color": "#0b1326",
@@ -11,12 +12,14 @@
     {
       "src": "icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

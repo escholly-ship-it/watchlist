@@ -37,12 +37,38 @@ function getSyncKey() {
   // 3. Fallback to localStorage
   return localStorage.getItem('watchlist_sync_key');
 }
-const SYNC_KEY = getSyncKey();
-const SYNC_ENABLED = !!SYNC_KEY;
+let SYNC_KEY = getSyncKey();
+let SYNC_ENABLED = !!SYNC_KEY;
 
 // Persist key to localStorage as backup
 if (SYNC_KEY) {
   localStorage.setItem('watchlist_sync_key', SYNC_KEY);
+}
+
+// Extract key from either a raw key string or a full URL (?key=... or #sync=...)
+function parseInputSyncKey(raw) {
+  const val = (raw || '').trim();
+  if (!val) return '';
+  try {
+    if (val.includes('?') || val.includes('#') || val.startsWith('http')) {
+      const u = new URL(val, window.location.origin);
+      const qKey = u.searchParams.get('key');
+      if (qKey) return qKey.trim();
+      const match = (u.hash || '').match(/sync=([^&]+)/);
+      if (match) return match[1].trim();
+    }
+  } catch (_) {}
+  const qMatch = val.match(/[?&]key=([^&#\s]+)/);
+  if (qMatch) return decodeURIComponent(qMatch[1]);
+  const hMatch = val.match(/sync=([^&#\s]+)/);
+  if (hMatch) return decodeURIComponent(hMatch[1]);
+  return val;
+}
+
+function generateRandomSyncKey() {
+  const arr = new Uint8Array(20);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ---- Streaming Services with TMDB provider IDs ----
@@ -246,6 +272,13 @@ function saveUiState() {
 const $addModal = document.getElementById('addModal');
 const $detailModal = document.getElementById('detailModal');
 const $pinModal = document.getElementById('pinModal');
+const $syncModal = document.getElementById('syncModal');
+const $syncKeyInput = document.getElementById('syncKeyInput');
+const $syncKeyError = document.getElementById('syncKeyError');
+const $btnSyncKey = document.getElementById('btnSyncKey');
+const $btnEmptySyncKey = document.getElementById('btnEmptySyncKey');
+const $btnSyncShare = document.getElementById('btnSyncShare');
+const $btnSyncCopyUrl = document.getElementById('btnSyncCopyUrl');
 const $searchInput = document.getElementById('searchInput');
 const $searchClear = document.getElementById('searchClear');
 const $searchResults = document.getElementById('searchResults');
@@ -297,7 +330,10 @@ function trapTab(e, root){
 
 // ---- Init ----
 async function init() {
+  registerServiceWorker();
+  setupOfflineAndInstallUi();
   loadItemsLocal();
+  updateSyncKeyUi();
   renderFilterBar();
   renderShortlist();
   renderWatchlist();
@@ -316,6 +352,67 @@ async function init() {
   await fetchMagazine();
   renderMagazinePill();
   maybeAutoOpenMagazine();
+}
+
+function updateSyncKeyUi() {
+  if ($btnSyncKey) {
+    $btnSyncKey.classList.toggle('has-key', SYNC_ENABLED);
+    $btnSyncKey.title = SYNC_ENABLED ? 'Sync-Key aktiv (klicken zum Anzeigen/Ändern)' : 'Kein Sync-Key gesetzt — hier eingeben';
+  }
+  if ($btnEmptySyncKey) {
+    $btnEmptySyncKey.classList.toggle('hidden', SYNC_ENABLED);
+  }
+  if ($btnSyncShare) {
+    $btnSyncShare.classList.toggle('hidden', !SYNC_ENABLED);
+  }
+  if ($btnSyncCopyUrl) {
+    $btnSyncCopyUrl.classList.toggle('hidden', !SYNC_ENABLED);
+  }
+}
+
+function openSyncModal() {
+  if (!$syncModal) return;
+  $syncKeyInput.value = SYNC_KEY || '';
+  $syncKeyError.classList.add('hidden');
+  updateSyncKeyUi();
+  $syncModal.classList.add('open');
+  openOverlay($syncModal, () => $syncKeyInput.focus());
+}
+
+function closeSyncModal() {
+  if (!$syncModal) return;
+  $syncModal.classList.remove('open');
+  closeOverlay($syncModal);
+}
+
+async function applySyncKey(rawInput) {
+  const parsed = parseInputSyncKey(rawInput);
+  if (!parsed || parsed.length < 32) {
+    $syncKeyError.classList.remove('hidden');
+    return;
+  }
+  $syncKeyError.classList.add('hidden');
+  SYNC_KEY = parsed;
+  SYNC_ENABLED = true;
+  localStorage.setItem('watchlist_sync_key', SYNC_KEY);
+
+  const params = new URLSearchParams(window.location.search);
+  params.set('key', SYNC_KEY);
+  window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+
+  updateSyncKeyUi();
+  closeSyncModal();
+  showAutoAddToast('Synchronisiere Watchlist…', 'loading');
+
+  const pulled = await pullFromServer();
+  if (pulled) {
+    await resolveVorgemerkt();
+    await fetchMagazine();
+    renderMagazinePill();
+    showAutoAddToast(`✓ Watchlist geladen (${items.length} Titel)`, 'success');
+  } else {
+    showAutoAddToast('Sync fehlgeschlagen — bitte Key prüfen', 'error');
+  }
 }
 
 // ---- Auto-Add via URL ----
@@ -1635,6 +1732,10 @@ function closeDetailModal() {
 
 // ---- Add Modal ----
 function openAddModal() {
+  if (!SYNC_ENABLED) {
+    openSyncModal();
+    return;
+  }
   resetAddModal();
   $addModal.classList.add('open');
   openOverlay($addModal, null);
@@ -1762,7 +1863,72 @@ function bindEvents() {
   });
   document.getElementById('pinCancel').addEventListener('click', closePinSheet);
 
-  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Pin > Detail > Add).
+  // Sync-Key Modal
+  if ($btnSyncKey) $btnSyncKey.addEventListener('click', openSyncModal);
+  if ($btnEmptySyncKey) $btnEmptySyncKey.addEventListener('click', openSyncModal);
+  const $syncClose = document.getElementById('syncModalClose');
+  if ($syncClose) $syncClose.addEventListener('click', closeSyncModal);
+  if ($syncModal) {
+    $syncModal.addEventListener('click', (e) => {
+      if (e.target === $syncModal) closeSyncModal();
+    });
+  }
+  const $btnSyncSave = document.getElementById('btnSyncSave');
+  if ($btnSyncSave) {
+    $btnSyncSave.addEventListener('click', () => applySyncKey($syncKeyInput.value));
+  }
+  if ($syncKeyInput) {
+    $syncKeyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applySyncKey($syncKeyInput.value); }
+    });
+  }
+  const $btnSyncGen = document.getElementById('btnSyncGenerate');
+  if ($btnSyncGen) {
+    $btnSyncGen.addEventListener('click', () => {
+      $syncKeyInput.value = generateRandomSyncKey();
+      $syncKeyError.classList.add('hidden');
+    });
+  }
+  if ($btnSyncShare) {
+    $btnSyncShare.addEventListener('click', async () => {
+      const key = parseInputSyncKey($syncKeyInput.value) || SYNC_KEY;
+      if (!key) return;
+      const shareUrl = `${window.location.origin}${window.location.pathname}?key=${encodeURIComponent(key)}`;
+      const shareData = {
+        title: 'Watchlist — Streaming-Watchlist',
+        text: 'Hier ist der persönliche Sync-Link zu unserer Watchlist:',
+        url: shareUrl,
+      };
+      if (navigator.share) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+        }
+      }
+      // Fallback: E-Mail-Client via mailto: öffnen
+      const subject = encodeURIComponent(shareData.title);
+      const body = encodeURIComponent(`${shareData.text}\n\n${shareUrl}`);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    });
+  }
+  if ($btnSyncCopyUrl) {
+    $btnSyncCopyUrl.addEventListener('click', async () => {
+      const key = parseInputSyncKey($syncKeyInput.value) || SYNC_KEY;
+      if (!key) return;
+      const shareUrl = `${window.location.origin}${window.location.pathname}?key=${encodeURIComponent(key)}`;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showAutoAddToast('✓ Share-URL in Zwischenablage kopiert', 'success');
+      } catch (_) {
+        $syncKeyInput.value = shareUrl;
+        $syncKeyInput.select();
+      }
+    });
+  }
+
+  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Pin > Detail > Add > Sync).
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const $reader = document.getElementById('magazineReader');
@@ -1772,6 +1938,7 @@ function bindEvents() {
       else if ($pinModal.classList.contains('open')) closePinSheet();
       else if ($detailModal.classList.contains('open')) closeDetailModal();
       else if ($addModal.classList.contains('open')) closeAddModal();
+      else if ($syncModal && $syncModal.classList.contains('open')) closeSyncModal();
     }
   });
 }
@@ -2345,6 +2512,76 @@ if ($magTrack) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = e.target.closest('.mag-rec');
     if (el) { e.preventDefault(); handleRec(el); }
+  });
+}
+
+// ---- Service Worker & Offline / Install UI ----
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('Service Worker registration failed:', err);
+    });
+  });
+}
+
+let deferredInstallPrompt = null;
+
+function setupOfflineAndInstallUi() {
+  const $offlineBadge = document.getElementById('offlineBadge');
+  const $btnInstall = document.getElementById('btnInstallPwa');
+
+  const updateOnlineStatus = () => {
+    const isOffline = !navigator.onLine;
+    if ($offlineBadge) $offlineBadge.classList.toggle('hidden', !isOffline);
+  };
+
+  updateOnlineStatus();
+  window.addEventListener('offline', () => {
+    updateOnlineStatus();
+    showAutoAddToast('Offline-Modus — lokale Watchlist aktiv', 'info');
+  });
+  window.addEventListener('online', async () => {
+    updateOnlineStatus();
+    if (SYNC_ENABLED) {
+      await pushToServer();
+    }
+  });
+
+  if (!$btnInstall) return;
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+  if (isStandalone) return;
+
+  const isIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || '');
+  if (isIOS) {
+    $btnInstall.classList.remove('hidden');
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    $btnInstall.classList.remove('hidden');
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    $btnInstall.classList.add('hidden');
+  });
+
+  $btnInstall.addEventListener('click', async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const { outcome } = await deferredInstallPrompt.userChoice;
+      if (outcome === 'accepted') {
+        deferredInstallPrompt = null;
+        $btnInstall.classList.add('hidden');
+      }
+    } else if (isIOS) {
+      showAutoAddToast('iOS: Tippe in Safari auf „Teilen" → „Zum Home-Bildschirm"', 'info');
+    }
   });
 }
 
