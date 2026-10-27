@@ -11,8 +11,12 @@
 //                          ?member=KEY → build a specific member (default: owner)
 //   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
 //                          ?member=KEY → rebuild a specific member (default: owner)
-//   Die X-API-Key-Pruefung dieser drei ist nur Laenge >= 32 (wie /sync): sie
-//   haelt den TMDB-Schluessel aus dem Browser, schuetzt aber nicht den Proxy.
+//   WL-34 (2026-10-27): Jede X-API-Key-Route (/sync, /magazine, /tmdb/*,
+//   /availability) nimmt nur bekannte Schluessel an: OWNER_SYNC_KEY, API_KEY,
+//   der Magazin-Roster (config:magazine_members) und die Liste config:sync_keys
+//   in KV. Die Liste steht nie im (oeffentlichen) Repo. Entfernen aus
+//   config:sync_keys sperrt nur, wenn der Schluessel weder Owner noch im Roster
+//   ist. PUT /sync: hoechstens MAX_SYNC_BYTES, kaputtes JSON -> 400.
 //   GET  /tmdb/search    — TMDB-Suche fuer die App (auth: X-API-Key), ?q=
 //   GET  /tmdb/details   — TMDB-Details fuer die App (auth: X-API-Key), ?type=&id=
 //   POST /availability   — WL-28: bester Anbieter je Titel (auth: X-API-Key),
@@ -58,6 +62,11 @@ const CORS_HEADERS = {
 };
 
 const MIN_KEY_LENGTH = 32;
+
+// WL-34: Schluessel-Liste und Groessengrenze.
+const SYNC_KEYS_KEY = 'config:sync_keys';
+const ALLOWLIST_TTL_MS = 5 * 60 * 1000;   // je Worker-Instanz
+const MAX_SYNC_BYTES = 4 * 1024 * 1024;   // KV-Wand: 25 MiB je Wert
 
 // Scholly's streaming providers (TMDB provider IDs → display name).
 const PROVIDER_IDS = {
@@ -237,7 +246,8 @@ export default {
 
     // Owner-scoped routes via X-API-Key
     const apiKey = request.headers.get('X-API-Key');
-    if (!apiKey || apiKey.length < MIN_KEY_LENGTH) {
+    if (!apiKey || apiKey.length < MIN_KEY_LENGTH || !(await isAllowedKey(env, apiKey))) {
+      if (apiKey) console.warn('key rejected', apiKey.slice(0, 8));
       return jsonResponse({ error: 'Unauthorized' }, 401);
     }
     const kvKey = `watchlist:${apiKey}`;
@@ -257,7 +267,16 @@ export default {
     }
 
     if (url.pathname === '/sync' && request.method === 'PUT') {
-      const body = await request.json();
+      const raw = await readBodyCapped(request, MAX_SYNC_BYTES);
+      if (raw === null) {
+        console.error('sync body too large', apiKey.slice(0, 8));
+        return jsonResponse({ error: `body larger than ${MAX_SYNC_BYTES} bytes` }, 413);
+      }
+      let body;
+      try { body = JSON.parse(raw); } catch { body = null; }
+      if (!body || typeof body !== 'object') {
+        return jsonResponse({ error: 'invalid JSON' }, 400);
+      }
       if (!Array.isArray(body.items)) {
         return jsonResponse({ error: 'items must be an array' }, 400);
       }
@@ -377,6 +396,80 @@ async function loadMagazineRoster(env) {
     extra = [];
   }
   return [owner, ...extra];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Schluessel-Liste (WL-34) — wer die X-API-Key-Routen nutzen darf
+// ─────────────────────────────────────────────────────────────────────────
+
+// Je Worker-Instanz nur Daten im Speicher (das fertige Set, kein Promise:
+// I/O einer Anfrage darf nicht von einer anderen erwartet werden). Ein
+// KV-Fehler wird nicht gecacht: sonst sperrte ein kurzer Aussetzer die Familie
+// 5 Minuten. env.ALLOWLIST_TTL_MS gibt es nur in Tests.
+let allowlistCache = null; // { keys: Set, loadedAt: ms }
+
+async function isAllowedKey(env, key) {
+  if (key === TEST_SYNC_KEY) return false;
+  if (key === env.OWNER_SYNC_KEY || key === env.API_KEY) return true;
+  const ttl = env.ALLOWLIST_TTL_MS !== undefined ? Number(env.ALLOWLIST_TTL_MS) : ALLOWLIST_TTL_MS;
+  const now = Date.now();
+  if (!allowlistCache || allowlistCache.loadedAt + ttl <= now) {
+    try {
+      allowlistCache = { keys: await loadAllowedKeys(env), loadedAt: now };
+    } catch (err) {
+      console.error('Allowlist load failed:', err && err.message ? err.message : String(err));
+      return false;
+    }
+  }
+  return allowlistCache.keys.has(key);
+}
+
+// Roster plus config:sync_keys, je Eintrag als Text gelesen und einzeln
+// geparst: Fehlt eine Liste, ist sie kaputtes JSON oder kein Array, faellt nur
+// sie weg (Owner/API_KEY gelten oben, der Roster bleibt). Wirft nur bei einem
+// KV-Fehler.
+async function loadAllowedKeys(env) {
+  const raws = await Promise.all([
+    kvGet(env, MAGAZINE_ROSTER_KEY, 'text'),
+    kvGet(env, SYNC_KEYS_KEY, 'text'),
+  ]);
+  const allowed = new Set();
+  for (const raw of raws) {
+    let list = null;
+    try { list = raw ? JSON.parse(raw) : null; } catch {
+      console.error('Allowlist entry is not valid JSON');
+    }
+    if (!Array.isArray(list)) continue;
+    for (const k of list) {
+      if (typeof k === 'string' && k.length >= MIN_KEY_LENGTH && k !== TEST_SYNC_KEY) allowed.add(k);
+    }
+  }
+  return allowed;
+}
+
+// Liest den Body als Stream und bricht ab, sobald mehr als maxBytes kommen
+// (Content-Length kann fehlen oder luegen). null = zu gross.
+async function readBodyCapped(request, maxBytes) {
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
 }
 
 // Best-effort taste pre-warm: rebuild the member's taste profile only if it is
