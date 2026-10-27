@@ -2496,3 +2496,44 @@ body.mag-open { overflow: hidden; }
   cursor: pointer;
 }
 .pin-cancel:hover { background: var(--surface-5); }
+
+/* WL-37: Rueckgaengig-Leiste unten */
+.undo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 16px);
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: calc(100% - 32px);
+  max-width: 480px;
+  box-sizing: border-box;
+  padding: 6px 6px 6px 16px;
+  border-radius: 12px;
+  background: var(--surface-5);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  animation: undo-bar-in 0.2s ease-out;
+}
+.undo-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.undo-bar-btn {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--primary-light);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.undo-bar-btn:hover { background: var(--surface-6); }
+.undo-bar-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@keyframes undo-bar-in { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .undo-bar { animation: none; } }
