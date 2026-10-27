@@ -122,4 +122,4 @@
 
   const api = { mergeItems, splitItems, makeTombstone, sameState, TOMBSTONE_TTL_MS };
   root.SyncMerge = api;
-})(self);
+})(typeof self !== 'undefined' ? self : globalThis);
