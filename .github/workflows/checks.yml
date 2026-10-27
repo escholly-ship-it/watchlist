@@ -15,5 +15,5 @@ jobs:
           node --check worker/src/index.js
       - name: manifest.json valide
         run: python3 -c "import json; json.load(open('manifest.json'))"
-      - name: Worker-Tests (WL-28)
-        run: node --test worker/test/availability.test.mjs
+      - name: Worker-Tests (WL-28, WL-34)
+        run: node --test worker/test/availability.test.mjs worker/test/auth.test.mjs

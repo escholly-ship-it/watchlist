@@ -11,6 +11,7 @@ function env(profile) {
   if (profile) kv.set(`config:providers:${KEY}`, profile);
   return {
     TMDB_API_KEY: 'x',
+    OWNER_SYNC_KEY: KEY, // WL-34: nur bekannte Schluessel
     WATCHLIST_KV: { get: async (k) => kv.get(k) ?? null, put: async () => {}, delete: async () => {} },
   };
 }
