@@ -25,7 +25,8 @@
     // Dynamic manifest: bake sync key into start_url for iOS homescreen Web App mode.
     // Must run synchronously in <head> BEFORE iOS reads the manifest.
     (function() {
-      var key = new URLSearchParams(window.location.search).get('key') || localStorage.getItem('watchlist_sync_key');
+      var key = new URLSearchParams(window.location.search).get('key');
+      if (!key) { try { key = localStorage.getItem('watchlist_sync_key'); } catch (e) {} }
       if (key) {
         var basePath = window.location.origin + window.location.pathname;
         var m = {
