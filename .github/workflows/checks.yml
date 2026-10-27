@@ -11,9 +11,12 @@ jobs:
       - name: JS-Syntax (app.js + sw.js + worker)
         run: |
           node --check app.js
+          node --check sync-merge.js
           node --check sw.js
           node --check worker/src/index.js
       - name: manifest.json valide
         run: python3 -c "import json; json.load(open('manifest.json'))"
       - name: Worker-Tests (WL-28, WL-34)
         run: node --test worker/test/availability.test.mjs worker/test/auth.test.mjs
+      - name: Sync-Zusammenfuehrung (WL-33)
+        run: node --test test/sync-merge.test.mjs

@@ -7,6 +7,9 @@
 const WORKER_BASE = 'https://watchlist-sync.escholly.workers.dev';
 const TMDB_IMG = 'https://image.tmdb.org/t/p';
 const STORAGE_KEY = 'watchlist_items';
+// WL-33: Loesch-Marker und Markierung "ungesendet" fuer den Sync
+const DELETED_KEY = 'watchlist_deleted';
+const UNSENT_KEY = 'watchlist_unsent';
 const WATCH_REGION = 'DE';
 
 // ---- Sync Configuration ----
@@ -225,6 +228,8 @@ function badgeTextColor(hex){
 
 // ---- State ----
 let items = [];
+// WL-33: Loesch-Marker (sync-merge.js) — nie angezeigt, nur fuer den Sync
+let deletedItems = [];
 let activeFilter = 'all';
 let activeService = null;
 let activeSort = 'added';
@@ -392,6 +397,15 @@ async function applySyncKey(rawInput) {
     return;
   }
   $syncKeyError.classList.add('hidden');
+  // WL-33: Wechsel auf einen anderen Schluessel — die lokale Liste gehoert
+  // zum alten Schluessel und liegt dort; sie darf nicht in die neue Liste
+  // hineingemischt werden (wie bisher: Server-Stand des neuen Schluessels).
+  if (SYNC_KEY && SYNC_KEY !== parsed) {
+    items = [];
+    deletedItems = [];
+    localStorage.removeItem(UNSENT_KEY);
+    saveItemsLocal();
+  }
   SYNC_KEY = parsed;
   SYNC_ENABLED = true;
   localStorage.setItem('watchlist_sync_key', SYNC_KEY);
@@ -540,6 +554,7 @@ function loadItemsLocal() {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     items = data ? JSON.parse(data) : [];
+    deletedItems = JSON.parse(localStorage.getItem(DELETED_KEY) || '[]');
     // Migrate old 'joyne' -> 'joyn'
     items.forEach(item => {
       if (item.serviceId === 'joyne') item.serviceId = 'joyn';
@@ -549,11 +564,13 @@ function loadItemsLocal() {
     });
   } catch {
     items = [];
+    deletedItems = [];
   }
 }
 
 function saveItemsLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  localStorage.setItem(DELETED_KEY, JSON.stringify(deletedItems));
 }
 
 // ---- Sync ----
@@ -568,62 +585,127 @@ function setSyncStatus(status) {
   }
 }
 
-async function pushToServer() {
-  if (!SYNC_ENABLED) return;
-  try {
-    setSyncStatus('syncing');
-    const res = await fetch(SYNC_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
-      body: JSON.stringify({ items }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setSyncStatus('synced');
-  } catch (err) {
-    console.error('Sync push error:', err);
-    setSyncStatus('error');
-  }
+// WL-33: Jeder Sync liest erst den Server-Stand, fuehrt je Titel zusammen
+// (sync-merge.js) und schreibt nur dann zurueck, wenn sich etwas
+// unterscheidet oder lokal etwas ungesendet ist. Ungesendetes bleibt in
+// localStorage markiert und wird nach 5 s, 30 s und 2 min sowie bei
+// "online", beim Wieder-Sichtbarwerden und beim App-Start nachgesendet.
+const RETRY_DELAYS_MS = [5000, 30000, 120000];
+let syncRunning = false;
+let syncAgain = false;
+let retryTimer = null;
+let retryIndex = 0;
+let localChangeSeq = 0;
+
+function hasMerge() {
+  return typeof SyncMerge !== 'undefined';
 }
 
-// true = Server-Stand geladen (oder erstmals hochgeladen); false = Fehler.
-async function pullFromServer() {
+function hasUnsent() {
+  return localStorage.getItem(UNSENT_KEY) === '1';
+}
+
+function allLocalItems() {
+  return items.concat(deletedItems);
+}
+
+// Uebernimmt das Ergebnis, behaelt aber die vorhandenen Objekte: offene
+// Ansichten (Detail-Modal) halten Referenzen auf sie.
+function applyMerged(merged) {
+  const byId = new Map(allLocalItems().map(it => [String(it.id), it]));
+  const reused = merged.map(m => {
+    const o = byId.get(String(m.id));
+    if (!o) return m;
+    for (const k of Object.keys(o)) if (!(k in m)) delete o[k];
+    return Object.assign(o, m);
+  });
+  const { live, deleted } = SyncMerge.splitItems(reused);
+  items = live;
+  deletedItems = deleted;
+  saveItemsLocal();
+}
+
+function scheduleRetry() {
+  if (retryTimer || retryIndex >= RETRY_DELAYS_MS.length) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    syncWithServer();
+  }, RETRY_DELAYS_MS[retryIndex++]);
+}
+
+// true = Server-Stand gelesen und zusammengefuehrt; false = Fehler.
+async function syncWithServer() {
   if (!SYNC_ENABLED) return false;
-  try {
-    setSyncStatus('syncing');
-    const res = await fetch(SYNC_URL, {
-      headers: { 'X-API-Key': SYNC_KEY },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const remote = data.items || [];
-    const hasSyncedBefore = !!localStorage.getItem('watchlist_last_sync');
-
-    if (remote.length === 0 && items.length > 0 && !hasSyncedBefore) {
-      // First-time setup: server empty and never synced before — push local data up
-      await pushToServer();
-    } else {
-      // Server is source of truth — replace local data
-      items = remote;
-      saveItemsLocal();
-      renderFilterBar();
-      renderShortlist();
-      renderWatchlist();
-      setSyncStatus('synced');
-    }
-
-    // Mark that we've synced at least once
-    localStorage.setItem('watchlist_last_sync', Date.now().toString());
-    return true;
-  } catch (err) {
-    console.error('Sync pull error:', err);
+  if (!hasMerge()) {
+    // Alte index.html aus dem Cache ohne sync-merge.js: lieber nicht syncen
+    // als ersetzen. Lokale Aenderungen bleiben markiert.
     setSyncStatus('error');
     return false;
   }
+  if (syncRunning) { syncAgain = true; return false; }
+  syncRunning = true;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  let pulled = false;
+  try {
+    setSyncStatus('syncing');
+    const res = await fetch(SYNC_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const remote = Array.isArray(data.items) ? data.items : [];
+
+    const before = JSON.stringify(allLocalItems());
+    applyMerged(SyncMerge.mergeItems(allLocalItems(), remote));
+    pulled = true;
+    if (JSON.stringify(allLocalItems()) !== before) {
+      renderFilterBar();
+      renderShortlist();
+      renderWatchlist();
+    }
+    localStorage.setItem('watchlist_last_sync', Date.now().toString());
+
+    if (hasUnsent() || !SyncMerge.sameState(allLocalItems(), remote)) {
+      const seq = localChangeSeq;
+      const put = await fetch(SYNC_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
+        body: JSON.stringify({ items: allLocalItems() }),
+      });
+      if (!put.ok) throw new Error(`HTTP ${put.status}`);
+      // Aenderungen waehrend des Sendens bleiben ungesendet -> Folgelauf.
+      if (seq === localChangeSeq) localStorage.removeItem(UNSENT_KEY);
+      else syncAgain = true;
+    }
+    retryIndex = 0;
+    setSyncStatus('synced');
+  } catch (err) {
+    console.error('Sync error:', err);
+    setSyncStatus('error');
+    scheduleRetry();
+  } finally {
+    syncRunning = false;
+    if (syncAgain) {
+      syncAgain = false;
+      syncWithServer();
+    }
+  }
+  return pulled;
+}
+
+function pushToServer() {
+  return syncWithServer();
+}
+
+function pullFromServer() {
+  return syncWithServer();
 }
 
 function saveItems() {
+  localChangeSeq++;
+  if (SYNC_ENABLED) localStorage.setItem(UNSENT_KEY, '1');
   saveItemsLocal();
-  pushToServer(); // async, non-blocking
+  retryIndex = 0;
+  syncWithServer(); // async, non-blocking
 }
 
 // ---- Shortlist Logic ----
@@ -651,9 +733,18 @@ function removeFromShortlist(itemId) {
   item.shortlist = null;
   item.updatedAt = Date.now();
   // Re-index remaining positions
-  getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+  reindexShortlist();
   saveItems();
   renderShortlist();
+}
+
+// WL-33: Positionswechsel ist eine Aenderung — ohne neues updatedAt wuerde
+// der folgende Sync die alte Reihenfolge vom Server zurueckholen.
+function reindexShortlist(list = getShortlistItems()) {
+  const now = Date.now();
+  list.forEach((it, idx) => {
+    if (it.shortlist !== idx) { it.shortlist = idx; it.updatedAt = now; }
+  });
 }
 
 function reorderShortlist(fromIndex, toIndex) {
@@ -662,7 +753,7 @@ function reorderShortlist(fromIndex, toIndex) {
   if (fromIndex >= list.length || toIndex >= list.length) return;
   const [moved] = list.splice(fromIndex, 1);
   list.splice(toIndex, 0, moved);
-  list.forEach((it, idx) => { it.shortlist = idx; });
+  reindexShortlist(list);
   saveItems();
   renderShortlist();
 }
@@ -858,7 +949,11 @@ function importData(json) {
   try {
     const data = JSON.parse(json);
     if (Array.isArray(data)) {
-      items = data;
+      // WL-33: Import fuegt hinzu und aktualisiert, loescht aber nichts.
+      const now = Date.now();
+      const stamped = data.filter(it => it && it.id != null && !it.deleted).map(it => ({ ...it, updatedAt: now }));
+      if (typeof SyncMerge !== 'undefined') applyMerged(SyncMerge.mergeItems(allLocalItems(), stamped));
+      else items = stamped;
       saveItems();
       renderFilterBar();
       renderWatchlist();
@@ -1519,7 +1614,7 @@ async function openDetail(item) {
     // Remove from shortlist when marked as watched
     if (item.watched && item.shortlist != null) {
       item.shortlist = null;
-      getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+      reindexShortlist();
     }
     saveItems();
     closeDetailModal();
@@ -1528,9 +1623,11 @@ async function openDetail(item) {
   });
 
   $content.querySelector('.btn-remove').addEventListener('click', () => {
+    // WL-33: Marker statt nur entfernen, damit andere Geraete mitloeschen
+    if (typeof SyncMerge !== 'undefined') deletedItems.push(SyncMerge.makeTombstone(item));
     items = items.filter(i => i.id !== item.id);
     // Re-index shortlist after removal
-    getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+    reindexShortlist();
     saveItems();
     closeDetailModal();
     renderShortlist();
@@ -2544,7 +2641,15 @@ function setupOfflineAndInstallUi() {
   window.addEventListener('online', async () => {
     updateOnlineStatus();
     if (SYNC_ENABLED) {
+      retryIndex = 0;
       await pushToServer();
+    }
+  });
+  // WL-33: Ungesendetes nachsenden, sobald die App wieder sichtbar ist
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && SYNC_ENABLED && hasUnsent()) {
+      retryIndex = 0;
+      pushToServer();
     }
   });
 
