@@ -1407,7 +1407,7 @@ function renderWatchlist() {
   // WL-40: solange der erste Abgleich laeuft, zeigt eine leere Liste den
   // Ladezustand statt "leer".
   const loadingFirst = items.length === 0 && firstSyncPending;
-  $loadingState.classList.toggle('hidden', !loadingFirst);
+  if ($loadingState) $loadingState.classList.toggle('hidden', !loadingFirst);
   if (loadingFirst) {
     $emptyState.classList.add('hidden');
   } else if (items.length === 0) {
