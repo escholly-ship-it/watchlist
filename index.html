@@ -82,6 +82,13 @@
       <span class="offline-dot" aria-hidden="true"></span>Offline · du siehst die zuletzt gespeicherte Liste
     </div>
 
+    <!-- WL-40: Sync-Hinweis unter dem Offline-Streifen, nur bei Problem -->
+    <div class="sync-banner hidden" id="syncBanner" role="alert">
+      <span class="sync-banner-dot" aria-hidden="true"></span>
+      <span class="sync-banner-text" id="syncBannerText"></span>
+      <button class="sync-banner-btn" id="syncBannerBtn" type="button"></button>
+    </div>
+
     <!-- Kompakt-Kopf (WL-23): Filter + Woche als Pillen; Chips im Sheet, Teaser im Overlay -->
     <div class="pill-row" id="pillRow">
       <button class="pill" id="pillFilter" aria-haspopup="dialog">
@@ -102,6 +109,10 @@
 
     <!-- Main Content: Watchlist (nur offene Titel, WL-23) -->
     <main class="watchlist" id="watchlist">
+      <div class="loading-state hidden" id="loadingState" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p>Deine Liste wird geladen</p>
+      </div>
       <div class="empty-state" id="emptyState">
         <div class="empty-icon">🎬</div>
         <p>Deine Watchlist ist leer</p>

@@ -269,6 +269,7 @@ const $watchlist = document.getElementById('watchlist');
 const $shortlistSection = document.getElementById('shortlistSection');
 const $shortlistTrack = document.getElementById('shortlistTrack');
 const $emptyState = document.getElementById('emptyState');
+const $loadingState = document.getElementById('loadingState');
 const $filterBar = document.getElementById('filterBar');
 // WL-23 Kompakt-Kopf
 const $pillFilter = document.getElementById('pillFilter');
@@ -363,6 +364,7 @@ async function init() {
   setupOfflineAndInstallUi();
   loadItemsLocal();
   updateSyncKeyUi();
+  firstSyncPending = SYNC_ENABLED && items.length === 0;
   renderFilterBar();
   renderShortlist();
   renderWatchlist();
@@ -442,6 +444,10 @@ async function applySyncKey(rawInput) {
 
   updateSyncKeyUi();
   closeSyncModal();
+  syncProblem = null;
+  renderSyncBanner();
+  firstSyncPending = items.length === 0;
+  renderWatchlist();
   showAutoAddToast('Synchronisiere Watchlist…', 'loading');
 
   const pulled = await pullFromServer();
@@ -638,12 +644,40 @@ function saveItemsLocal() {
 }
 
 // ---- Sync ----
+// WL-40: Fehlerhinweis als Banner unter der Kopfzeile. syncProblem ist null,
+// 'fail' (Abgleich fehlgeschlagen) oder 'auth' (Worker: 401, Schluessel nicht
+// freigeschaltet). Offline sagt das schon der Offline-Streifen.
+let syncProblem = null;
+let firstSyncPending = false;
+let syncSpinTimer = null;
+let syncSpinShown = false;
+
+function renderSyncBanner() {
+  const el = document.getElementById('syncBanner');
+  if (!el) return;
+  const show = !!syncProblem && SYNC_ENABLED && navigator.onLine !== false;
+  if (show) {
+    const auth = syncProblem === 'auth';
+    document.getElementById('syncBannerText').textContent = auth ? 'Schlüssel nicht freigeschaltet' : 'Nicht synchron';
+    document.getElementById('syncBannerBtn').textContent = auth ? 'Schlüssel prüfen' : 'Erneut versuchen';
+    el.classList.toggle('auth', auth);
+  }
+  el.classList.toggle('hidden', !show);
+}
+
+function endFirstSync() {
+  if (!firstSyncPending) return;
+  firstSyncPending = false;
+  renderWatchlist();
+}
+
 function setSyncStatus(status) {
   syncStatus = status;
   const el = document.getElementById('syncIndicator');
   if (!el) return;
-  el.className = 'sync-indicator ' + status;
-  el.textContent = { idle: '', syncing: '↻', synced: '✓', error: '!' }[status] || '';
+  el.className = 'sync-indicator ' + (status === 'error' ? 'idle' : status);
+  // Fehler zeigt der Banner mit Text; das Kopf-Zeichen bleibt aus.
+  el.textContent = { idle: '', syncing: '↻', synced: '✓', error: '' }[status] || '';
   if (status === 'synced') {
     setTimeout(() => { if (syncStatus === 'synced') setSyncStatus('idle'); }, 2000);
   }
@@ -703,7 +737,10 @@ async function syncWithServer() {
   if (!hasMerge()) {
     // Alte index.html aus dem Cache ohne sync-merge.js: lieber nicht syncen
     // als ersetzen. Lokale Aenderungen bleiben markiert.
+    syncProblem = 'fail';
     setSyncStatus('error');
+    renderSyncBanner();
+    endFirstSync();
     return false;
   }
   if (syncRunning) { syncAgain = true; return false; }
@@ -712,9 +749,12 @@ async function syncWithServer() {
   retryTimer = null;
   let pulled = false;
   try {
-    setSyncStatus('syncing');
+    // WL-40: Ladezeichen erst bei spuerbarer Dauer; kurzes Holen bleibt still.
+    syncSpinShown = false;
+    clearTimeout(syncSpinTimer);
+    syncSpinTimer = setTimeout(() => { syncSpinShown = true; setSyncStatus('syncing'); }, 800);
     const res = await fetchT(SYNC_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) { const e = new Error(`HTTP ${res.status}`); e.status = res.status; throw e; }
     const data = await res.json();
     const remote = Array.isArray(data.items) ? data.items : [];
 
@@ -735,19 +775,28 @@ async function syncWithServer() {
         headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
         body: JSON.stringify({ items: allLocalItems() }),
       });
-      if (!put.ok) throw new Error(`HTTP ${put.status}`);
+      if (!put.ok) { const e = new Error(`HTTP ${put.status}`); e.status = put.status; throw e; }
       // Aenderungen waehrend des Sendens bleiben ungesendet -> Folgelauf.
       if (seq === localChangeSeq) lsRemove(UNSENT_KEY);
       else syncAgain = true;
     }
     retryIndex = 0;
-    setSyncStatus('synced');
+    const recovered = syncProblem !== null;
+    syncProblem = null;
+    renderSyncBanner();
+    if (syncSpinShown || recovered) setSyncStatus('synced');
+    else if (syncStatus === 'syncing') setSyncStatus('idle');
   } catch (err) {
     console.error('Sync error:', err);
+    syncProblem = err && err.status === 401 ? 'auth' : 'fail';
     setSyncStatus('error');
-    scheduleRetry();
+    renderSyncBanner();
+    // 401 heilt nicht von selbst: kein Wiederholen im Hintergrund.
+    if (syncProblem !== 'auth') scheduleRetry();
   } finally {
+    clearTimeout(syncSpinTimer);
     syncRunning = false;
+    endFirstSync();
     if (syncAgain) {
       syncAgain = false;
       syncWithServer();
@@ -1355,7 +1404,13 @@ function renderWatchlist() {
   const open = filtered.filter(i => !i.watched).sort(bySort);
   const seen = filtered.filter(i => i.watched).sort(bySort);
 
-  if (items.length === 0) {
+  // WL-40: solange der erste Abgleich laeuft, zeigt eine leere Liste den
+  // Ladezustand statt "leer".
+  const loadingFirst = items.length === 0 && firstSyncPending;
+  $loadingState.classList.toggle('hidden', !loadingFirst);
+  if (loadingFirst) {
+    $emptyState.classList.add('hidden');
+  } else if (items.length === 0) {
     $emptyState.classList.remove('hidden');
   } else {
     $emptyState.classList.add('hidden');
@@ -2808,6 +2863,7 @@ function setupOfflineAndInstallUi() {
     const isOffline = !navigator.onLine;
     if ($offlineBadge) $offlineBadge.classList.toggle('hidden', !isOffline);
     document.body.classList.toggle('is-offline', isOffline);
+    renderSyncBanner();
   };
 
   updateOnlineStatus();
@@ -2822,12 +2878,22 @@ function setupOfflineAndInstallUi() {
       await pushToServer();
     }
   });
-  // WL-33: Ungesendetes nachsenden, sobald die App wieder sichtbar ist
+  // WL-33: Ungesendetes nachsenden, sobald die App wieder sichtbar ist.
+  // WL-40: zusaetzlich still holen (hoechstens alle 10 s, ausser bei
+  // Ungesendetem oder Fehler).
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && SYNC_ENABLED && hasUnsent()) {
+    if (document.visibilityState !== 'visible' || !SYNC_ENABLED) return;
+    const last = Number(lsGet('watchlist_last_sync')) || 0;
+    if (hasUnsent() || syncProblem || Date.now() - last > 10000) {
       retryIndex = 0;
-      pushToServer();
+      pullFromServer();
     }
+  });
+  const $syncBannerBtn = document.getElementById('syncBannerBtn');
+  if ($syncBannerBtn) $syncBannerBtn.addEventListener('click', () => {
+    if (syncProblem === 'auth') { openSyncModal(); return; }
+    retryIndex = 0;
+    pullFromServer();
   });
 
   if (!$btnInstall) return;
