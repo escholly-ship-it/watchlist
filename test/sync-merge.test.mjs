@@ -104,3 +104,10 @@ test('sameState ignoriert Reihenfolge der Titel und Schluessel', () => {
 test('ungueltige Eintraege werden ignoriert', () => {
   assert.deepEqual(mergeItems([null, { title: 'ohne id' }], [undefined, t('a1')], NOW).map(i => i.id), ['a1']);
 });
+
+test('Gleichstand: juengere Anbieter-Pruefung bleibt (qa#2)', () => {
+  const local = [t('a1', { providers: { flat: ['arte'], checkedAt: NOW - 5 } })];
+  const remote = [t('a1', { providers: { flat: ['arte'], checkedAt: NOW - 9000 } })];
+  assert.equal(mergeItems(local, remote, NOW)[0].providers.checkedAt, NOW - 5);
+  assert.equal(mergeItems(remote, local, NOW)[0].providers.checkedAt, NOW - 5);
+});

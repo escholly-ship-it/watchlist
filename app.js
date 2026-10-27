@@ -733,9 +733,18 @@ function removeFromShortlist(itemId) {
   item.shortlist = null;
   item.updatedAt = Date.now();
   // Re-index remaining positions
-  getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+  reindexShortlist();
   saveItems();
   renderShortlist();
+}
+
+// WL-33: Positionswechsel ist eine Aenderung — ohne neues updatedAt wuerde
+// der folgende Sync die alte Reihenfolge vom Server zurueckholen.
+function reindexShortlist(list = getShortlistItems()) {
+  const now = Date.now();
+  list.forEach((it, idx) => {
+    if (it.shortlist !== idx) { it.shortlist = idx; it.updatedAt = now; }
+  });
 }
 
 function reorderShortlist(fromIndex, toIndex) {
@@ -744,7 +753,7 @@ function reorderShortlist(fromIndex, toIndex) {
   if (fromIndex >= list.length || toIndex >= list.length) return;
   const [moved] = list.splice(fromIndex, 1);
   list.splice(toIndex, 0, moved);
-  list.forEach((it, idx) => { it.shortlist = idx; });
+  reindexShortlist(list);
   saveItems();
   renderShortlist();
 }
@@ -1605,7 +1614,7 @@ async function openDetail(item) {
     // Remove from shortlist when marked as watched
     if (item.watched && item.shortlist != null) {
       item.shortlist = null;
-      getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+      reindexShortlist();
     }
     saveItems();
     closeDetailModal();
@@ -1618,7 +1627,7 @@ async function openDetail(item) {
     if (typeof SyncMerge !== 'undefined') deletedItems.push(SyncMerge.makeTombstone(item));
     items = items.filter(i => i.id !== item.id);
     // Re-index shortlist after removal
-    getShortlistItems().forEach((it, idx) => { it.shortlist = idx; });
+    reindexShortlist();
     saveItems();
     closeDetailModal();
     renderShortlist();

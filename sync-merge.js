@@ -6,7 +6,7 @@
 
    Regel je Titel-id: nur auf einer Seite -> bleibt; auf beiden -> die
    Fassung mit dem groesseren updatedAt (sonst addedAt, sonst 0), bei
-   Gleichstand die Server-Fassung. Geloeschte Titel reisen als Marker
+   Gleichstand die Server-Fassung mit der juengeren Anbieter-Pruefung. Geloeschte Titel reisen als Marker
    { ...titel, deleted: true, updatedAt } mit und gewinnen wie jede andere
    Aenderung; Marker aelter als 30 Tage fallen weg. Ein leerer Server-Stand
    loescht damit lokal nichts.
@@ -53,6 +53,16 @@
     for (const it of list) if (it.deleted && it.shortlist != null) it.shortlist = null;
   }
 
+  // Gleichstand: Server-Fassung, aber die juengere Anbieter-Pruefung bleibt.
+  // Eine Neupruefung ohne neuen Anbieter setzt nur providers.checkedAt (kein
+  // updatedAt); ginge sie verloren, liefe sie bei jedem Start erneut.
+  function keepNewerCheck(remote, local) {
+    const lc = Number(local.providers && local.providers.checkedAt) || 0;
+    const rc = Number(remote.providers && remote.providers.checkedAt) || 0;
+    if (lc <= rc) return remote;
+    return { ...remote, providers: { ...(remote.providers || {}), checkedAt: lc } };
+  }
+
   // local, remote: Listen mit Titeln und Markern. Liefert eine neue Liste
   // (Objekte werden kopiert, Eingaben bleiben unveraendert).
   function mergeItems(local, remote, now) {
@@ -62,6 +72,7 @@
       if (!isValid(it)) continue;
       const r = byId.get(String(it.id));
       if (!r || stamp(it) > stamp(r)) byId.set(String(it.id), it);
+      else if (stamp(it) === stamp(r)) byId.set(String(it.id), keepNewerCheck(r, it));
     }
     const t = now == null ? Date.now() : now;
     let out = [];
