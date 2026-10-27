@@ -50,6 +50,20 @@
 //   Daten sind keine schlechten Daten), neue Katalog-Rubrik "entdeckt"
 //   (taste-genre-basierte Perlen ohne Datumsfenster — der Pool erschoepft
 //   nicht), Taste-Prewarm-Sample 30 + watched-Titel doppelt gewichtet.
+// WL-42 (2026-10-27): Seit WL-33 tragen die Sync-Daten Loesch-Marker
+//   ({ ...titel, deleted: true, updatedAt }, 30 Tage). PUT /sync ersetzt den
+//   KV-Stand nicht mehr, sondern fuehrt ihn mit mergeItems aus sync-merge.js
+//   (dieselbe Regel wie die App) mit dem Body zusammen; ein kaputter KV-Stand
+//   zaehlt als leer. GET /sync liefert die Marker weiter aus. Das
+//   Geschmacksprofil sieht nur lebende Titel; der Magazin-Ausschluss behaelt
+//   die Marker, damit gerade geloeschte Titel nicht als Empfehlung kommen.
+//   Grenze: KV ist nicht transaktional, zwei Speicherungen von verschiedenen
+//   Cloudflare-Standorten innerhalb etwa einer Minute koennen sich weiter
+//   ueberschreiben.
+
+import '../../sync-merge.js';
+
+const { mergeItems } = globalThis.SyncMerge;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants
@@ -280,8 +294,14 @@ export default {
       if (!Array.isArray(body.items)) {
         return jsonResponse({ error: 'items must be an array' }, 400);
       }
-      await kvPut(env, kvKey, JSON.stringify(body.items));
-      return jsonResponse({ ok: true, count: body.items.length, timestamp: Date.now() });
+      // WL-42: zusammenfuehren statt ersetzen.
+      let stored = null;
+      try { stored = await kvGet(env, kvKey, 'json'); } catch (err) {
+        console.error('sync stored value unreadable, treated as empty', apiKey.slice(0, 8), String(err));
+      }
+      const merged = mergeItems(body.items, Array.isArray(stored) ? stored : [], Date.now());
+      await kvPut(env, kvKey, JSON.stringify(merged));
+      return jsonResponse({ ok: true, count: merged.length, timestamp: Date.now() });
     }
 
     if (url.pathname === '/tmdb/search' && request.method === 'GET') {
@@ -524,8 +544,9 @@ async function runMagazinePipeline(env, { dryRun, source, syncKey }) {
         .map((it) => `${it.type || 'movie'}_${it.tmdbId}`)
     );
 
+    // WL-42: Ausschluss oben mit Markern, Geschmack nur aus lebenden Titeln.
     const { profile: taste, sample: tasteSample } =
-      await loadOrBuildTasteProfile(watchlist, env, owner, note);
+      await loadOrBuildTasteProfile(liveItems(watchlist), env, owner, note);
     const seen = await loadMagazineSeen(env, owner);
     note(`Magazine seen state: ${Object.keys(seen).length} entries (last ${MAGAZINE_SEEN_DAYS}d)`);
 
@@ -695,9 +716,14 @@ function requireSecret(env, name) {
 // KV: owner watchlist + magazine seen state
 // ─────────────────────────────────────────────────────────────────────────
 
+// Mit Loesch-Markern (WL-42); fuer Geschmack liveItems() davor.
 async function loadWatchlist(env, syncKey) {
   const data = await kvGet(env, `watchlist:${syncKey}`, 'json');
   return Array.isArray(data) ? data : [];
+}
+
+function liveItems(list) {
+  return list.filter((it) => it && !it.deleted);
 }
 
 async function loadMagazineSeen(env, syncKey) {
@@ -905,7 +931,7 @@ async function rebuildTasteProfileCache(env, syncKey) {
   kvCalls = 0;
   requireSecret(env, 'OWNER_SYNC_KEY');
   requireSecret(env, 'TMDB_API_KEY');
-  const watchlist = await loadWatchlist(env, syncKey);
+  const watchlist = liveItems(await loadWatchlist(env, syncKey));
   if (watchlist.length === 0) {
     console.log('Watchlist empty — skipping taste-profile rebuild');
     return;
