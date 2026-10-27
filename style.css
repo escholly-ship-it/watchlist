@@ -1190,6 +1190,49 @@ body {
   font-size: var(--fs-sm);
 }
 
+/* WL-39 Design A: ehrliche Ausfall-Meldung (Suche, Anbieter-Prüfung) */
+.outage-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 12px 12px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.outage-title { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.outage-title.amber { font-size: var(--fs-sm); color: var(--tertiary); }
+.outage-text { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45; max-width: 280px; }
+.btn-outage-primary, .btn-outage-outline {
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: var(--radius-pill);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-outage-primary {
+  margin-top: 6px;
+  border: 0;
+  background: var(--primary);
+  color: var(--primary-dark);
+}
+.btn-outage-outline {
+  border: 1px solid var(--tertiary);
+  background: transparent;
+  color: var(--tertiary);
+}
+.availability-info.availability-outage {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(223, 116, 18, 0.08);
+  border-color: rgba(223, 116, 18, 0.25);
+}
+.availability-outage .outage-text { text-align: left; max-width: none; font-size: var(--fs-xs); }
+
 /* ---- Service Selection ---- */
 .service-select {
   padding: 0 18px 22px;

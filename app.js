@@ -22,6 +22,23 @@ const WATCH_REGION = 'DE';
  * Cross-Ref: Sprint 304 sessionStorage-Audit (4 SYNC_KEY-Hits), Sprint 305 WL-8.
  */
 const SYNC_URL = `${WORKER_BASE}/sync`;
+
+// WL-39: jeder Netzaufruf der App bekommt eine Zeitgrenze. Bei Ablauf wirft
+// fetchT einen Fehler mit kind 'timeout'; andere Netzfehler tragen kind 'error'.
+const FETCH_TIMEOUT_MS = 8000;
+async function fetchT(url, opts = {}, ms = FETCH_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (err) {
+    err.kind = timedOut ? 'timeout' : 'error';
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 let syncStatus = 'idle'; // idle | syncing | synced | error
 
 // Read sync key from URL: ?key=KEY (query param) or #sync=KEY (legacy hash)
@@ -462,7 +479,7 @@ async function handleAutoAdd(tmdbId, mediaType) {
 
   try {
     // Fetch TMDB details
-    const detailRes = await fetch(`${WORKER_BASE}/tmdb/details?type=${encodeURIComponent(mediaType)}&id=${encodeURIComponent(tmdbId)}`, { headers: { 'X-API-Key': SYNC_KEY } });
+    const detailRes = await fetchT(`${WORKER_BASE}/tmdb/details?type=${encodeURIComponent(mediaType)}&id=${encodeURIComponent(tmdbId)}`, { headers: { 'X-API-Key': SYNC_KEY } });
     if (!detailRes.ok) throw new Error(`TMDB ${detailRes.status}`);
     const detail = await detailRes.json();
 
@@ -696,7 +713,7 @@ async function syncWithServer() {
   let pulled = false;
   try {
     setSyncStatus('syncing');
-    const res = await fetch(SYNC_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
+    const res = await fetchT(SYNC_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const remote = Array.isArray(data.items) ? data.items : [];
@@ -713,7 +730,7 @@ async function syncWithServer() {
 
     if (hasUnsent() || !SyncMerge.sameState(allLocalItems(), remote)) {
       const seq = localChangeSeq;
-      const put = await fetch(SYNC_URL, {
+      const put = await fetchT(SYNC_URL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
         body: JSON.stringify({ items: allLocalItems() }),
@@ -1050,14 +1067,16 @@ function importData(json) {
 async function searchTmdb(query) {
   if (!SYNC_ENABLED || !query.trim()) return [];
   const url = `${WORKER_BASE}/tmdb/search?q=${encodeURIComponent(query)}`;
+  // WL-39: Ausfall ist kein „keine Treffer" — der Fehler geht an den Aufrufer.
   try {
-    const res = await fetch(url, { headers: { 'X-API-Key': SYNC_KEY } });
+    const res = await fetchT(url, { headers: { 'X-API-Key': SYNC_KEY } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return data.results || [];
   } catch (err) {
     console.error('TMDB search error:', err);
-    return [];
+    if (!err.kind) err.kind = 'error';
+    throw err;
   }
 }
 
@@ -1096,11 +1115,12 @@ const AVAILABILITY_STALE_MS = 12 * 3600 * 1000;
 // Eine Liste {type,id,title} → Map "type:id" → providers (fehlt bei Fehler).
 async function fetchAvailability(list) {
   const out = new Map();
+  out.failKind = null; // WL-39: 'timeout' | 'error', wenn ein Teilaufruf scheiterte
   if (!SYNC_ENABLED || list.length === 0) return out;
   for (let i = 0; i < list.length; i += AVAILABILITY_BATCH) {
     const chunk = list.slice(i, i + AVAILABILITY_BATCH);
     try {
-      const res = await fetch(`${WORKER_BASE}/availability`, {
+      const res = await fetchT(`${WORKER_BASE}/availability`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
         body: JSON.stringify({ items: chunk }),
@@ -1113,14 +1133,17 @@ async function fetchAvailability(list) {
       }
     } catch (err) {
       console.error('Availability error:', err);
+      out.failKind = out.failKind === 'timeout' ? 'timeout' : (err.kind || 'error');
     }
   }
   return out;
 }
 
 // null = Pruefung fehlgeschlagen (Netz, Worker) — nie als "kein Angebot" lesen.
-async function fetchProviders(tmdbId, mediaType, title) {
+// info (optional) bekommt failKind: 'timeout' | 'error' (WL-39).
+async function fetchProviders(tmdbId, mediaType, title, info) {
   const map = await fetchAvailability([{ type: mediaType, id: tmdbId, title: title || '' }]);
+  if (info) info.failKind = map.failKind || 'error';
   return map.get(`${mediaType}:${tmdbId}`) || null;
 }
 
@@ -1445,6 +1468,23 @@ function createCard(item) {
 }
 
 // ---- Render: Search Results ----
+// WL-39 Design A: Such-Ausfall steht dort, wo die Ergebnisse stünden.
+function outageTitle(kind, base) {
+  return kind === 'timeout' ? 'Antwortet gerade zu langsam' : base;
+}
+function renderSearchError(kind, retry) {
+  $searchResults.innerHTML = `
+    <div class="outage-box" role="alert">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"></path><path d="M8.5 8.6A5 5 0 0 0 6 18h11"></path><path d="M10.4 5.2A6 6 0 0 1 18 10a4 4 0 0 1 2.7 6.9"></path></svg>
+      <div class="outage-title">${outageTitle(kind, 'Suche gerade nicht erreichbar')}</div>
+      <div class="outage-text">Der Dienst antwortet nicht. Deine Liste ist davon nicht betroffen.</div>
+      <button type="button" class="btn-outage-primary">Nochmal versuchen</button>
+    </div>`;
+  const btn = $searchResults.querySelector('.btn-outage-primary');
+  btn.addEventListener('click', retry);
+  btn.focus();
+}
+
 function renderSearchResults(results) {
   if (results === null) {
     $searchResults.innerHTML = '<div class="search-loading">Suche...</div>';
@@ -1544,7 +1584,16 @@ async function selectResult(result) {
     </div>
   `;
 
-  // Show loading state for availability
+  // Render grid without availability first
+  renderServiceGrid({});
+  $btnSave.disabled = true;
+
+  runAvailabilityCheck(result);
+}
+
+// WL-39 Design A: Ausfall der Prüfung ≠ „keine Verfügbarkeit". Das Raster bleibt
+// wählbar, Speichern geht nach manueller Wahl; „Nochmal prüfen" wiederholt.
+async function runAvailabilityCheck(result) {
   const availContainer = document.getElementById('availabilityInfo');
   if (availContainer) availContainer.remove();
   const loadingEl = document.createElement('div');
@@ -1553,16 +1602,26 @@ async function selectResult(result) {
   loadingEl.innerHTML = '<div class="spinner"></div> Verfügbarkeit wird geprüft...';
   $serviceGrid.parentNode.insertBefore(loadingEl, $serviceGrid);
 
-  // Render grid without availability first
-  renderServiceGrid({});
-  $btnSave.disabled = true;
+  const info = {};
+  const providers = await fetchProviders(result.id, result.media_type, getTitle(result), info);
+  if (selectedTmdb !== result) return; // anderer Titel gewählt oder Dialog geschlossen
 
-  // Fetch providers
-  const providers = (await fetchProviders(result.id, result.media_type, getTitle(result))) || { ...EMPTY_PROVIDERS };
+  const infoEl = document.getElementById('availabilityInfo');
+  if (!providers) {
+    availableServices = { ...EMPTY_PROVIDERS };
+    if (infoEl) {
+      infoEl.className = 'availability-info availability-outage';
+      infoEl.innerHTML = `
+        <div class="outage-title amber">${outageTitle(info.failKind, 'Verfügbarkeit konnte nicht geprüft werden')}</div>
+        <div class="outage-text">Wähle den Dienst selbst oder prüfe es gleich noch einmal.</div>
+        <button type="button" class="btn-outage-outline">Nochmal prüfen</button>`;
+      infoEl.setAttribute('role', 'alert');
+      infoEl.querySelector('.btn-outage-outline').addEventListener('click', () => runAvailabilityCheck(result));
+    }
+    return; // Raster unverändert wählbar; ein schon gewählter Dienst bleibt
+  }
   availableServices = providers;
 
-  // Update availability info
-  const infoEl = document.getElementById('availabilityInfo');
   if (infoEl) {
     if (providers.flat.length > 0) {
       const names = providers.flat.map(id => SERVICES.find(s => s.id === id)?.name).filter(Boolean);
@@ -1578,7 +1637,12 @@ async function selectResult(result) {
   }
 
   // Re-render grid with availability
+  const keep = selectedService;
   renderServiceGrid(providers);
+  if (keep && !providers.flat.length) {
+    const btn = $serviceGrid.querySelector(`[data-service="${keep}"]`);
+    if (btn) { btn.classList.add('selected'); selectedService = keep; $btnSave.disabled = false; }
+  }
 }
 
 // ---- Add Item ----
@@ -1978,11 +2042,19 @@ function bindEvents() {
     }
 
     renderSearchResults(null);
-    searchTimeout = setTimeout(async () => {
-      const results = await searchTmdb(q);
+    const run = async () => {
+      let results;
+      try {
+        results = await searchTmdb(q);
+      } catch (err) {
+        if (mySearch !== searchSeq) return;
+        renderSearchError(err.kind, () => { renderSearchResults(null); run(); });
+        return;
+      }
       if (mySearch !== searchSeq) return; // WL-41: veraltete Antwort verwerfen
       renderSearchResults(results);
-    }, 400);
+    };
+    searchTimeout = setTimeout(run, 400);
   });
 
   $searchClear.addEventListener('click', () => {
@@ -2150,7 +2222,7 @@ const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
 async function fetchMagazine() {
   if (!SYNC_ENABLED) return;
   try {
-    const res = await fetch(MAGAZINE_URL, { headers: { 'X-API-Key': SYNC_KEY } });
+    const res = await fetchT(MAGAZINE_URL, { headers: { 'X-API-Key': SYNC_KEY } });
     if (!res.ok) return;
     const data = await res.json();
     magazine = data.magazine || null;
@@ -2634,7 +2706,13 @@ async function addRecommendationFromMagazine(rec) {
   pendingRecAdds.add(rec.id);
   showAutoAddToast('Wird hinzugefügt…', 'loading');
   try {
-    const results = await searchTmdb(rec.title);
+    let results;
+    try {
+      results = await searchTmdb(rec.title);
+    } catch {
+      showAutoAddToast('Suche gerade nicht erreichbar', 'error');
+      return;
+    }
     const match = results.find(r => r.id === rec.id) || results.find(r => getTitle(r) === rec.title);
     if (!match) { showAutoAddToast(`„${rec.title}" konnte nicht aufgelöst werden`, 'error'); return; }
     const type = getTypeTag(match);
