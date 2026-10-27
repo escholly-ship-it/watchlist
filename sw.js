@@ -2,7 +2,7 @@
    WATCHLIST — Service Worker (Offline App Shell + Runtime Cache)
    ============================================ */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 
@@ -67,21 +67,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Same-origin static assets (CSS, JS, Icons, Manifest) -> Stale-While-Revalidate
+  // 2. Same-origin static assets (CSS, JS, Icons, Manifest) -> Network-first, fallback to cache
+  //    (so a new index.html never runs with an old app.js; cache: 'no-cache' umgeht den 10-Minuten-HTTP-Cache von Pages)
   if (url.origin === self.location.origin) {
     event.respondWith(
       caches.open(SHELL_CACHE).then(async (cache) => {
-        const cached = await cache.match(request, { ignoreSearch: true });
-        const networkPromise = fetch(request)
-          .then((response) => {
-            if (response && response.ok) {
-              cache.put(request, response.clone());
-            }
-            return response;
-          })
-          .catch(() => null);
-
-        return cached || (await networkPromise) || new Response('', { status: 504 });
+        try {
+          const response = await fetch(request, { cache: 'no-cache' });
+          if (response && response.ok) {
+            cache.put(request, response.clone());
+          }
+          return response;
+        } catch (_) {
+          return (await cache.match(request, { ignoreSearch: true })) || new Response('', { status: 504 });
+        }
       })
     );
     return;
