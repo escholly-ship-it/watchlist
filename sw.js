@@ -21,7 +21,7 @@ const APP_SHELL_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL_ASSETS))
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL_ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
   );
   self.skipWaiting();
 });
@@ -75,7 +75,7 @@ self.addEventListener('fetch', (event) => {
         try {
           const response = await fetch(request, { cache: 'no-cache' });
           if (response && response.ok) {
-            cache.put(request, response.clone());
+            cache.put(request, response.clone()).catch(() => {});
           }
           return response;
         } catch (_) {
@@ -99,7 +99,7 @@ self.addEventListener('fetch', (event) => {
         try {
           const response = await fetch(request);
           if (response && (response.ok || response.type === 'opaque')) {
-            cache.put(request, response.clone());
+            cache.put(request, response.clone()).catch(() => {});
           }
           return response;
         } catch (_) {
