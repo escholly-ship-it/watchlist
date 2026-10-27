@@ -2729,6 +2729,7 @@ function setupOfflineAndInstallUi() {
   const updateOnlineStatus = () => {
     const isOffline = !navigator.onLine;
     if ($offlineBadge) $offlineBadge.classList.toggle('hidden', !isOffline);
+    document.body.classList.toggle('is-offline', isOffline);
   };
 
   updateOnlineStatus();
