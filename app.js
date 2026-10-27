@@ -38,14 +38,20 @@ function getSyncKey() {
   if (match) return match[1];
 
   // 3. Fallback to localStorage
-  return localStorage.getItem('watchlist_sync_key');
+  return lsGet('watchlist_sync_key');
 }
+// WL-41: localStorage kann werfen (Safari privat, Speicher voll) — Schreiben
+// darf das Speichern/Senden nie abbrechen, Lesen faellt auf null zurueck.
+function lsSet(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+function lsGet(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+function lsRemove(key) { try { localStorage.removeItem(key); } catch (_) {} }
+
 let SYNC_KEY = getSyncKey();
 let SYNC_ENABLED = !!SYNC_KEY;
 
 // Persist key to localStorage as backup
 if (SYNC_KEY) {
-  localStorage.setItem('watchlist_sync_key', SYNC_KEY);
+  lsSet('watchlist_sync_key', SYNC_KEY);
 }
 
 // Extract key from either a raw key string or a full URL (?key=... or #sync=...)
@@ -237,6 +243,7 @@ let selectedTmdb = null;
 let selectedService = null;
 let availableServices = [];
 let searchTimeout = null;
+let searchSeq = 0;  // WL-41: nur die juengste Suchanfrage darf rendern
 
 const SHORTLIST_MAX = 5;
 
@@ -265,14 +272,14 @@ const $seenGrid = document.getElementById('seenGrid');
 const UI_KEY = 'watchlist_ui';
 function loadUiState() {
   try {
-    return { seenOpen: false, ...JSON.parse(localStorage.getItem(UI_KEY) || '{}') };
+    return { seenOpen: false, ...JSON.parse(lsGet(UI_KEY) || '{}') };
   } catch (_) {
     return { seenOpen: false };
   }
 }
 let uiState = loadUiState();
 function saveUiState() {
-  localStorage.setItem(UI_KEY, JSON.stringify(uiState));
+  lsSet(UI_KEY, JSON.stringify(uiState));
 }
 const $addModal = document.getElementById('addModal');
 const $detailModal = document.getElementById('detailModal');
@@ -343,6 +350,8 @@ async function init() {
   renderShortlist();
   renderWatchlist();
   bindEvents();
+  // WL-41: Magazin parallel zu Pull und Neupruefung holen (unabhaengig von der Liste)
+  const magazineReady = fetchMagazine();
   // Sync from server (non-blocking)
   const pulled = await pullFromServer();
   // WL-28: Neupruefung nur nach erfolgreichem Pull — sonst wuerde der Push der
@@ -354,7 +363,7 @@ async function init() {
     await handleAutoAdd(autoAdd.tmdbId, autoAdd.mediaType);
   }
   // Wochen-Magazin (WL-5; WL-23: Pille statt Teaser im Fluss)
-  await fetchMagazine();
+  await magazineReady;
   renderMagazinePill();
   maybeAutoOpenMagazine();
 }
@@ -403,12 +412,12 @@ async function applySyncKey(rawInput) {
   if (SYNC_KEY && SYNC_KEY !== parsed) {
     items = [];
     deletedItems = [];
-    localStorage.removeItem(UNSENT_KEY);
+    lsRemove(UNSENT_KEY);
     saveItemsLocal();
   }
   SYNC_KEY = parsed;
   SYNC_ENABLED = true;
-  localStorage.setItem('watchlist_sync_key', SYNC_KEY);
+  lsSet('watchlist_sync_key', SYNC_KEY);
 
   const params = new URLSearchParams(window.location.search);
   params.set('key', SYNC_KEY);
@@ -518,6 +527,8 @@ function showAutoAddToast(message, type) {
   if (!toast) {
     toast = document.createElement('div');
     toast.id = 'autoAddToast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     Object.assign(toast.style, {
       position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
       padding: '14px 24px', borderRadius: '12px', fontSize: '15px', fontWeight: '500',
@@ -552,9 +563,9 @@ function cleanAutoAddParams() {
 // ---- Storage (Local) ----
 function loadItemsLocal() {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
+    const data = lsGet(STORAGE_KEY);
     items = data ? JSON.parse(data) : [];
-    deletedItems = JSON.parse(localStorage.getItem(DELETED_KEY) || '[]');
+    deletedItems = JSON.parse(lsGet(DELETED_KEY) || '[]');
     // Migrate old 'joyne' -> 'joyn'
     items.forEach(item => {
       if (item.serviceId === 'joyne') item.serviceId = 'joyn';
@@ -569,8 +580,8 @@ function loadItemsLocal() {
 }
 
 function saveItemsLocal() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  localStorage.setItem(DELETED_KEY, JSON.stringify(deletedItems));
+  lsSet(STORAGE_KEY, JSON.stringify(items));
+  lsSet(DELETED_KEY, JSON.stringify(deletedItems));
 }
 
 // ---- Sync ----
@@ -602,7 +613,7 @@ function hasMerge() {
 }
 
 function hasUnsent() {
-  return localStorage.getItem(UNSENT_KEY) === '1';
+  return lsGet(UNSENT_KEY) === '1';
 }
 
 function allLocalItems() {
@@ -662,7 +673,7 @@ async function syncWithServer() {
       renderShortlist();
       renderWatchlist();
     }
-    localStorage.setItem('watchlist_last_sync', Date.now().toString());
+    lsSet('watchlist_last_sync', Date.now().toString());
 
     if (hasUnsent() || !SyncMerge.sameState(allLocalItems(), remote)) {
       const seq = localChangeSeq;
@@ -673,7 +684,7 @@ async function syncWithServer() {
       });
       if (!put.ok) throw new Error(`HTTP ${put.status}`);
       // Aenderungen waehrend des Sendens bleiben ungesendet -> Folgelauf.
-      if (seq === localChangeSeq) localStorage.removeItem(UNSENT_KEY);
+      if (seq === localChangeSeq) lsRemove(UNSENT_KEY);
       else syncAgain = true;
     }
     retryIndex = 0;
@@ -702,7 +713,7 @@ function pullFromServer() {
 
 function saveItems() {
   localChangeSeq++;
-  if (SYNC_ENABLED) localStorage.setItem(UNSENT_KEY, '1');
+  if (SYNC_ENABLED) lsSet(UNSENT_KEY, '1');
   saveItemsLocal();
   retryIndex = 0;
   syncWithServer(); // async, non-blocking
@@ -798,7 +809,7 @@ function renderShortlist() {
         : `<div class="shortlist-no-poster">🎬</div>`
       }
       ${svcMarkerHtml(svc)}
-      <button class="shortlist-remove" aria-label="Entfernen">×</button>
+      <button class="shortlist-remove" aria-label="${escAttr(item.title)} entfernen">×</button>
       <div class="shortlist-overlay">
         <div class="shortlist-card-title">${esc(item.title)}</div>
       </div>
@@ -1374,7 +1385,7 @@ function renderSearchResults(results) {
   }
 
   $searchResults.innerHTML = results.map(r => `
-    <div class="search-result" data-id="${r.id}" data-type="${r.media_type}">
+    <div class="search-result" role="button" tabindex="0" data-id="${r.id}" data-type="${r.media_type}">
       <img class="result-poster"
            src="${tmdbPoster(r.poster_path, 'w92') || ''}"
            alt=""
@@ -1388,10 +1399,14 @@ function renderSearchResults(results) {
   `).join('');
 
   $searchResults.querySelectorAll('.search-result').forEach(el => {
-    el.addEventListener('click', () => {
+    const choose = () => {
       const tmdbId = parseInt(el.dataset.id);
       const result = results.find(r => r.id === tmdbId);
       if (result) selectResult(result);
+    };
+    el.addEventListener('click', choose);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); }
     });
   });
 }
@@ -1846,6 +1861,8 @@ function closeAddModal() {
 }
 
 function resetAddModal() {
+  searchSeq++;
+  clearTimeout(searchTimeout);
   $searchInput.value = '';
   $searchClear.classList.add('hidden');
   $searchResults.innerHTML = '';
@@ -1877,6 +1894,7 @@ function bindEvents() {
     $searchClear.classList.toggle('hidden', !q);
 
     clearTimeout(searchTimeout);
+    const mySearch = ++searchSeq;
     if (q.length < 2) {
       $searchResults.innerHTML = '';
       return;
@@ -1885,11 +1903,14 @@ function bindEvents() {
     renderSearchResults(null);
     searchTimeout = setTimeout(async () => {
       const results = await searchTmdb(q);
+      if (mySearch !== searchSeq) return; // WL-41: veraltete Antwort verwerfen
       renderSearchResults(results);
     }, 400);
   });
 
   $searchClear.addEventListener('click', () => {
+    searchSeq++;
+    clearTimeout(searchTimeout);
     $searchInput.value = '';
     $searchClear.classList.add('hidden');
     $searchResults.innerHTML = '';
