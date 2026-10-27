@@ -2,7 +2,8 @@
    WATCHLIST — Service Worker (Offline App Shell + Runtime Cache)
    ============================================ */
 
-const CACHE_VERSION = 'v1';
+// v2 (WL-33): /sync nicht mehr aus dem Cache; alter Laufzeit-Cache faellt weg
+const CACHE_VERSION = 'v2';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 
@@ -10,6 +11,7 @@ const APP_SHELL_ASSETS = [
   './',
   './index.html',
   './style.css',
+  './sync-merge.js',
   './app.js',
   './manifest.json',
   './favicon-16.png',
@@ -111,7 +113,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. Worker GET requests (/sync, /magazine) -> Network-First with runtime cache fallback for offline reading
+  // 4. Worker GET requests (/magazine) -> Network-First with runtime cache fallback for offline reading.
+  //    WL-33: /sync nie aus dem Cache — ein alter Server-Stand offline darf
+  //    nicht als aktuell gelten. Ohne respondWith geht die Anfrage ans Netz.
+  if (url.hostname.endsWith('.workers.dev') && url.pathname === '/sync') return;
   if (url.hostname.endsWith('.workers.dev')) {
     event.respondWith(
       fetch(request)
