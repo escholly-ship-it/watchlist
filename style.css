@@ -2576,3 +2576,64 @@ body.mag-open { overflow: hidden; }
 body.is-offline {
   --offline-h: var(--offline-h-strip);
 }
+
+/* ---- WL-40: Sync-Hinweis (Banner unter Kopfzeile/Offline-Streifen, nur bei Problem) ---- */
+.sync-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--content-pad);
+  background: rgba(255, 122, 122, 0.12);
+  border-bottom: 1px solid rgba(255, 122, 122, 0.5);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.sync-banner.auth {
+  background: rgba(255, 183, 134, 0.16);
+  border-bottom-color: rgba(255, 183, 134, 0.5);
+  color: var(--tertiary);
+}
+.sync-banner.hidden { display: none; }
+.sync-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.sync-banner-text { flex: 1 1 12ch; min-width: 0; }
+.sync-banner-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding-inline: var(--space-4);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.sync-banner-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.loading-state {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 80px 20px;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+.loading-state.hidden { display: none; }
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--ghost);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
