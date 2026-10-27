@@ -14,22 +14,31 @@ const TEST_KEY = 'a'.repeat(40);
 
 globalThis.fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 });
 
-// Frische KV-Bindung je Aufruf: der Schluessel-Cache haengt an ihr.
-function env({ roster = [ROSTER], list = [LISTED], failGet = false } = {}) {
+// KV-Mock wie Cloudflare: Werte als Text gespeichert, 'json' parst (und
+// wirft bei kaputtem JSON). Der Schluessel-Cache ist modulweit; ttl 0 laedt
+// in jedem Test neu, nur der Cache-Test setzt eine Laufzeit.
+function env({ roster = [ROSTER], list = [LISTED], failGet = false, ttl = 0 } = {}) {
   const kv = new Map();
-  if (roster !== null) kv.set('config:magazine_members', roster); // null = Eintrag fehlt
-  if (list !== null) kv.set('config:sync_keys', list);
+  const store = (k, v) => kv.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+  if (roster !== null) store('config:magazine_members', roster); // null = Eintrag fehlt
+  if (list !== null) store('config:sync_keys', list);
   const calls = { get: 0, put: 0 };
   const binding = {
-    get: async (k) => {
+    get: async (k, type) => {
       calls.get++;
       if (failGet && (k === 'config:sync_keys' || k === 'config:magazine_members')) throw new Error('kv down');
-      return kv.get(k) ?? null;
+      const v = kv.get(k);
+      if (v === undefined) return null;
+      return type === 'json' ? JSON.parse(v) : v;
     },
     put: async (k, v) => { calls.put++; kv.set(k, v); },
     delete: async (k) => { kv.delete(k); },
   };
-  return { e: { OWNER_SYNC_KEY: OWNER, API_KEY: LEGACY, TMDB_API_KEY: 't', WATCHLIST_KV: binding }, calls, kv };
+  return {
+    e: { OWNER_SYNC_KEY: OWNER, API_KEY: LEGACY, TMDB_API_KEY: 't', WATCHLIST_KV: binding, ALLOWLIST_TTL_MS: ttl },
+    calls,
+    kv,
+  };
 }
 
 function req(path, key, init = {}) {
@@ -70,7 +79,7 @@ test('Test-Schluessel bleibt draussen, auch wenn er in der Liste steht', async (
 });
 
 test('fehlende oder kaputte Liste: nur Owner und Roster', async () => {
-  for (const list of [null, 'x', { a: 1 }]) {
+  for (const list of [null, '"x"', '{"a":1}', '["' + 's'.repeat(40) + '",']) {
     const { e } = env({ list });
     assert.equal((await worker.fetch(req('/sync', LISTED), e, {})).status, 401);
     assert.equal((await worker.fetch(req('/sync', ROSTER), e, {})).status, 200);
@@ -78,9 +87,10 @@ test('fehlende oder kaputte Liste: nur Owner und Roster', async () => {
   }
 });
 
-test('Liste wird je KV-Bindung zwischengespeichert', async () => {
+test('Liste wird je Instanz zwischengespeichert', async () => {
   const { e, calls } = env();
-  await worker.fetch(req('/tmdb/search?q=a', STRANGER), e, {});
+  await worker.fetch(req('/tmdb/search?q=a', STRANGER), e, {}); // ttl 0: laedt sicher neu
+  e.ALLOWLIST_TTL_MS = 60000;
   const after1 = calls.get;
   await worker.fetch(req('/tmdb/search?q=a', STRANGER), e, {});
   await worker.fetch(req('/tmdb/search?q=a', LISTED), e, {});
@@ -92,7 +102,7 @@ test('KV-Fehler wird nicht gecacht, die naechste Anfrage liest neu', async () =>
   const { e, calls, kv } = env({ failGet: true });
   assert.equal((await worker.fetch(req('/tmdb/search?q=a', LISTED), e, {})).status, 401);
   // KV wieder gesund
-  e.WATCHLIST_KV.get = async (k) => { calls.get++; return kv.get(k) ?? null; };
+  e.WATCHLIST_KV.get = async (k) => { calls.get++; return kv.get(k) ?? null; }; // 'text'
   assert.equal((await worker.fetch(req('/tmdb/search?q=a', LISTED), e, {})).status, 200);
 });
 

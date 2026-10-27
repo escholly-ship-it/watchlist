@@ -402,43 +402,45 @@ async function loadMagazineRoster(env) {
 // Schluessel-Liste (WL-34) — wer die X-API-Key-Routen nutzen darf
 // ─────────────────────────────────────────────────────────────────────────
 
-// Je KV-Bindung ein Cache-Eintrag {promise, expires}. Gecacht wird das
-// Promise, damit gleichzeitige Kaltstarts nur einmal lesen. Ein KV-Fehler
-// wird nicht gecacht: sonst sperrte ein kurzer Aussetzer die Familie 5 Minuten.
-const allowlistCache = new WeakMap();
+// Je Worker-Instanz nur Daten im Speicher (das fertige Set, kein Promise:
+// I/O einer Anfrage darf nicht von einer anderen erwartet werden). Ein
+// KV-Fehler wird nicht gecacht: sonst sperrte ein kurzer Aussetzer die Familie
+// 5 Minuten. env.ALLOWLIST_TTL_MS gibt es nur in Tests.
+let allowlistCache = null; // { keys: Set, loadedAt: ms }
 
 async function isAllowedKey(env, key) {
   if (key === TEST_SYNC_KEY) return false;
   if (key === env.OWNER_SYNC_KEY || key === env.API_KEY) return true;
-  const kv = env.WATCHLIST_KV;
+  const ttl = env.ALLOWLIST_TTL_MS !== undefined ? Number(env.ALLOWLIST_TTL_MS) : ALLOWLIST_TTL_MS;
   const now = Date.now();
-  let entry = allowlistCache.get(kv);
-  if (!entry || entry.expires <= now) {
-    entry = { promise: loadAllowedKeys(env), expires: now + ALLOWLIST_TTL_MS };
-    allowlistCache.set(kv, entry);
-    entry.promise.catch(() => {
-      if (allowlistCache.get(kv) === entry) allowlistCache.delete(kv);
-    });
+  if (!allowlistCache || allowlistCache.loadedAt + ttl <= now) {
+    try {
+      allowlistCache = { keys: await loadAllowedKeys(env), loadedAt: now };
+    } catch (err) {
+      console.error('Allowlist load failed:', err && err.message ? err.message : String(err));
+      return false;
+    }
   }
-  try {
-    return (await entry.promise).has(key);
-  } catch (err) {
-    console.error('Allowlist load failed:', err && err.message ? err.message : String(err));
-    return false;
-  }
+  return allowlistCache.keys.has(key);
 }
 
-// Roster plus config:sync_keys. Fehlt die Liste oder ist sie kein Array, gelten
-// nur Owner/API_KEY (oben) und der Roster. Wirft nur bei einem KV-Fehler.
+// Roster plus config:sync_keys, je Eintrag als Text gelesen und einzeln
+// geparst: Fehlt eine Liste, ist sie kaputtes JSON oder kein Array, faellt nur
+// sie weg (Owner/API_KEY gelten oben, der Roster bleibt). Wirft nur bei einem
+// KV-Fehler.
 async function loadAllowedKeys(env) {
-  const [roster, list] = await Promise.all([
-    kvGet(env, MAGAZINE_ROSTER_KEY, 'json'),
-    kvGet(env, SYNC_KEYS_KEY, 'json'),
+  const raws = await Promise.all([
+    kvGet(env, MAGAZINE_ROSTER_KEY, 'text'),
+    kvGet(env, SYNC_KEYS_KEY, 'text'),
   ]);
   const allowed = new Set();
-  for (const raw of [roster, list]) {
-    if (!Array.isArray(raw)) continue;
-    for (const k of raw) {
+  for (const raw of raws) {
+    let list = null;
+    try { list = raw ? JSON.parse(raw) : null; } catch {
+      console.error('Allowlist entry is not valid JSON');
+    }
+    if (!Array.isArray(list)) continue;
+    for (const k of list) {
       if (typeof k === 'string' && k.length >= MIN_KEY_LENGTH && k !== TEST_SYNC_KEY) allowed.add(k);
     }
   }
