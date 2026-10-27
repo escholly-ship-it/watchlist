@@ -550,6 +550,42 @@ function showAutoAddToast(message, type) {
   }
 }
 
+// WL-37: Rueckgaengig-Leiste unten, nur nach "Entfernen" und "Geschaut".
+// Eine Leiste zugleich; eine neue ersetzt die alte, ohne deren Aktion zu
+// widerrufen. Laeuft nach UNDO_BAR_MS aus.
+const UNDO_BAR_MS = 6000;
+let undoBarTimer = null;
+
+function hideUndoBar() {
+  clearTimeout(undoBarTimer);
+  undoBarTimer = null;
+  const bar = document.getElementById('undoBar');
+  if (bar) bar.remove();
+}
+
+function showUndoBar(message, onUndo) {
+  hideUndoBar();
+  const bar = document.createElement('div');
+  bar.id = 'undoBar';
+  bar.className = 'undo-bar';
+  bar.setAttribute('role', 'status');
+  bar.setAttribute('aria-live', 'polite');
+  const text = document.createElement('span');
+  text.className = 'undo-bar-text';
+  text.textContent = message;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'undo-bar-btn';
+  btn.textContent = 'Rückgängig';
+  btn.addEventListener('click', () => {
+    hideUndoBar();
+    onUndo();
+  });
+  bar.append(text, btn);
+  document.body.appendChild(bar);
+  undoBarTimer = setTimeout(hideUndoBar, UNDO_BAR_MS);
+}
+
 function cleanAutoAddParams() {
   const params = new URLSearchParams(window.location.search);
   params.delete('add');
@@ -747,6 +783,42 @@ function removeFromShortlist(itemId) {
   reindexShortlist();
   saveItems();
   renderShortlist();
+}
+
+// WL-37: Rueckgaengig. Beide Wege schreiben den Titel mit frischem updatedAt
+// zurueck, damit Last-write-wins (sync-merge.js) ihn auch auf anderen Geraeten
+// gegen Marker bzw. Geschaut-Stand gewinnen laesst.
+function restoreShortlistSlot(item, slot) {
+  if (slot == null || item.watched) return;
+  const free = getShortlistItems().filter(i => i !== item);
+  if (free.length >= SHORTLIST_MAX) return;
+  item.shortlist = Math.min(slot, free.length);
+  free.splice(item.shortlist, 0, item);
+  free.forEach((it, idx) => { if (it.shortlist !== idx) { it.shortlist = idx; it.updatedAt = Date.now(); } });
+}
+
+function undoRemove(snapshot, index) {
+  if (items.some(i => String(i.id) === String(snapshot.id))) return;
+  deletedItems = deletedItems.filter(i => String(i.id) !== String(snapshot.id));
+  const restored = { ...snapshot, shortlist: null, updatedAt: Date.now() };
+  delete restored.deleted;
+  items.splice(Math.max(0, Math.min(index, items.length)), 0, restored);
+  restoreShortlistSlot(restored, snapshot.shortlist);
+  saveItems();
+  renderShortlist();
+  renderFilterBar();
+  renderWatchlist();
+}
+
+function undoWatched(id, before) {
+  const item = items.find(i => String(i.id) === String(id));
+  if (!item) return;
+  item.watched = before.watched;
+  item.updatedAt = Date.now();
+  restoreShortlistSlot(item, before.shortlist);
+  saveItems();
+  renderShortlist();
+  renderWatchlist();
 }
 
 // WL-33: Positionswechsel ist eine Aenderung — ohne neues updatedAt wuerde
@@ -1624,6 +1696,7 @@ async function openDetail(item) {
   }
 
   $content.querySelector('.btn-watched').addEventListener('click', () => {
+    const before = { watched: item.watched, shortlist: item.shortlist };
     item.watched = !item.watched;
     item.updatedAt = Date.now();
     // Remove from shortlist when marked as watched
@@ -1635,9 +1708,12 @@ async function openDetail(item) {
     closeDetailModal();
     renderShortlist();
     renderWatchlist();
+    if (item.watched) showUndoBar(`„${item.title}" als geschaut markiert`, () => undoWatched(item.id, before));
   });
 
   $content.querySelector('.btn-remove').addEventListener('click', () => {
+    const snapshot = { ...item };
+    const index = items.indexOf(item);
     // WL-33: Marker statt nur entfernen, damit andere Geraete mitloeschen
     if (typeof SyncMerge !== 'undefined') deletedItems.push(SyncMerge.makeTombstone(item));
     items = items.filter(i => i.id !== item.id);
@@ -1648,6 +1724,7 @@ async function openDetail(item) {
     renderShortlist();
     renderFilterBar();
     renderWatchlist();
+    showUndoBar(`„${item.title}" entfernt`, () => undoRemove(snapshot, index));
   });
 
   refreshDetailPin(item);
