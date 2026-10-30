@@ -28,5 +28,5 @@ enabled = true
 # ── Required secrets (set via `wrangler secret put <NAME>`) ────────────────
 # API_KEY              — legacy owner-key for /sync endpoint (PWA, optional)
 # ADMIN_KEY            — gate for POST /magazine-build manual trigger
-# OWNER_SYNC_KEY       — Scholly's 32-char sync-key; used as KV-namespace owner
+# OWNER_SYNC_KEY       — the owner's 32-char sync-key; used as KV-namespace owner
 # TMDB_API_KEY         — TMDB v3 API key
