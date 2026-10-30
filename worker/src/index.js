@@ -60,6 +60,14 @@
 //   Grenze: KV ist nicht transaktional, zwei Speicherungen von verschiedenen
 //   Cloudflare-Standorten innerhalb etwa einer Minute koennen sich weiter
 //   ueberschreiben.
+// WL-NUTZUNG-MESSEN (2026-10-30): Tageszaehler je Pseudonym in Cloudflare D1
+//   (Binding NUTZUNG_DB, Datenbank watchlist-nutzung, Schema
+//   worker/schema/nutzung.sql). GET /sync zaehlt `abrufe`, PUT /sync
+//   `sendungen`; `wer` = erste 12 Hex-Zeichen von SHA-256(Sync-Schluessel),
+//   kein Titel, kein Schluessel. Gezaehlt wird nach der Antwort
+//   (ctx.waitUntil), ein D1-Fehler wird nur geloggt und bricht Sync nie.
+//   Fehlt das Binding, wird nicht gezaehlt. Gelesen wird aus der Cloud ueber
+//   den Cloudflare-Konnektor (d1_database_query).
 
 import '../../sync-merge.js';
 
@@ -277,6 +285,7 @@ export default {
           data = legacy;
         }
       }
+      zaehleNutzung(env, ctx, apiKey, 'abrufe');
       return jsonResponse({ items: data || [], timestamp: Date.now() });
     }
 
@@ -301,6 +310,7 @@ export default {
       }
       const merged = mergeItems(body.items, Array.isArray(stored) ? stored : [], Date.now());
       await kvPut(env, kvKey, JSON.stringify(merged));
+      zaehleNutzung(env, ctx, apiKey, 'sendungen');
       return jsonResponse({ ok: true, count: merged.length, timestamp: Date.now() });
     }
 
@@ -416,6 +426,41 @@ async function loadMagazineRoster(env) {
     extra = [];
   }
   return [owner, ...extra];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Nutzungszaehler (WL-NUTZUNG-MESSEN) — Tageszaehler je Pseudonym in D1
+// ─────────────────────────────────────────────────────────────────────────
+
+// Je Spalte eine feste Anweisung: der Spaltenname kommt nie aus einer Eingabe.
+const NUTZUNG_SQL = {
+  abrufe: 'insert into nutzung (tag, wer, abrufe, sendungen) values (?1, ?2, 1, 0) '
+    + 'on conflict(tag, wer) do update set abrufe = abrufe + 1',
+  sendungen: 'insert into nutzung (tag, wer, abrufe, sendungen) values (?1, ?2, 0, 1) '
+    + 'on conflict(tag, wer) do update set sendungen = sendungen + 1',
+};
+
+// Startet die Zaehlung, ohne die Antwort warten zu lassen. Ohne Binding oder
+// mit unbekannter Spalte passiert nichts; jeder Fehler wird nur geloggt.
+function zaehleNutzung(env, ctx, syncKey, spalte) {
+  if (!env.NUTZUNG_DB || !NUTZUNG_SQL[spalte]) return;
+  const lauf = schreibeNutzung(env, syncKey, spalte).catch((err) => {
+    console.error('nutzung nicht gezaehlt', spalte, err && err.message ? err.message : String(err));
+  });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(lauf);
+}
+
+async function schreibeNutzung(env, syncKey, spalte) {
+  const tag = new Date().toISOString().slice(0, 10);
+  const wer = await nutzungPseudonym(syncKey);
+  await env.NUTZUNG_DB.prepare(NUTZUNG_SQL[spalte]).bind(tag, wer).run();
+}
+
+// Erste 12 Hex-Zeichen von SHA-256(Schluessel): stabil je Person, nicht
+// zurueckrechenbar, kein Teil des Schluessels selbst.
+async function nutzungPseudonym(syncKey) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(syncKey));
+  return Array.from(new Uint8Array(digest).slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
