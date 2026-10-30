@@ -29,7 +29,7 @@ function env(extra = {}, { seeded = true } = {}) {
     delete: async (k) => { kv.delete(k); },
   };
   return {
-    e: { OWNER_SYNC_KEY: OWNER, ADMIN_KEY: ADMIN, TMDB_API_KEY: 't', WATCHLIST_KV: binding, ALLOWLIST_TTL_MS: 0, ...extra },
+    e: { OWNER_SYNC_KEY: OWNER, ADMIN_KEY: ADMIN, TMDB_API_KEY: 't', WATCHLIST_KV: binding, ...extra },
     kv,
   };
 }
