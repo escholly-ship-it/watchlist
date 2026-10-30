@@ -10,6 +10,13 @@ compatibility_flags = ["nodejs_compat"]
 binding = "WATCHLIST_KV"
 id = "d21a31cf2f614d05a1d5767954abc5c6"
 
+# WL-NUTZUNG-MESSEN (2026-10-30): Tageszaehler je Pseudonym (GET/PUT /sync).
+# Angelegt per Cloudflare-Konnektor, Schema worker/schema/nutzung.sql.
+[[d1_databases]]
+binding = "NUTZUNG_DB"
+database_name = "watchlist-nutzung"
+database_id = "3d0dc369-ed32-49fe-8605-52dd6281ea75"
+
 # WL-11 (2026-06-14): per-member magazines via stateless daily round-robin.
 #   "0 16 * * *" daily magazine build — 16:00 UTC = 18:00 MESZ — for that day's
 #                roster member (idx = floor(scheduledTime/86400000) % len).
