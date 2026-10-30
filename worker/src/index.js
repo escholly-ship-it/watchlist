@@ -82,7 +82,7 @@ const SYNC_KEYS_KEY = 'config:sync_keys';
 const ALLOWLIST_TTL_MS = 5 * 60 * 1000;   // je Worker-Instanz
 const MAX_SYNC_BYTES = 4 * 1024 * 1024;   // KV-Wand: 25 MiB je Wert
 
-// Scholly's streaming providers (TMDB provider IDs → display name).
+// The owner's streaming providers (TMDB provider IDs → display name).
 const PROVIDER_IDS = {
   8: 'Netflix',
   9: 'Amazon Prime Video',
@@ -117,7 +117,7 @@ const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
 // search              = Such-Seite des Dienstes mit {q}; ohne {q} die leere Such-Seite
 //                       (Dienst nimmt keinen Titel-Parameter an); null → Link auf die
 //                       TMDB-Watch-Seite. Nur gemessene Vorlagen: Netflix, Magenta TV, Joyn,
-//                       Disney+ und Paramount+ am 2026-09-28 in Schollys Chrome. Sky Go hat keine
+//                       Disney+ und Paramount+ am 2026-09-28 im Browser des Eigentuemers. Sky Go hat keine
 //                       Web-Suche; sky.de/suche?query= durchsucht die Sky-Seiten (kann einen
 //                       verfuegbaren Titel verfehlen). RTL+ ?query= eingeloggt gemessen. HBO Max
 //                       nur Such-Seite: der Titel-Link war nur mit aktivem Abo pruefbar.
@@ -172,7 +172,7 @@ const TASTE_SAMPLE_SIZE = 15;
 const TASTE_PREWARM_SAMPLE_SIZE = 30;
 const TASTE_CACHE_TTL_DAYS = 8;
 
-// Original-language preference (Scholly watches OV only).
+// Original-language preference (the owner watches OV only).
 const PREFERRED_LANGUAGES = new Set(['en', 'de', 'sv']);
 const NON_PREFERRED_LANG_FACTOR = 0.5;
 
@@ -1093,7 +1093,7 @@ function itemKey(item) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Discovery — release windows on Scholly's providers (DE)
+// Discovery — release windows on the owner's providers (DE)
 // ─────────────────────────────────────────────────────────────────────────
 
 async function fetchMagazineWindow(dateFrom, dateTo, page, voteCountGte, env, opts = {}) {
