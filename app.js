@@ -140,7 +140,7 @@ const SERVICE_SEARCH = {
   prime: 'https://www.primevideo.com/search/ref=atv_nb_sug?phrase={q}',
   disney: 'https://www.disneyplus.com/de-de/browse/search',
   apple: 'https://tv.apple.com/de/search?term={q}',
-  sky: 'skygo://',
+  sky: 'https://www.sky.de/suche?query={q}',
   hbo: 'https://play.hbomax.com/search',
   paramount: 'https://www.paramountplus.com/de/search/',
   magenta: 'https://web.magentatv.de/suche/vod_more_web/{q}',
@@ -1129,11 +1129,6 @@ async function searchTmdb(query) {
   }
 }
 
-// WL-43: erlaubte skygo://-Ziele (Startseite oder aufgeloeste Serien-/Film-UUID).
-const SKY_DEEPLINK_RE = /^skygo:\/\/(?:(?:series|watch)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/;
-const SKY_RESOLVED_RE = /^skygo:\/\/(?:series|watch)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const skyLinkInFlight = new Map();
-
 // WL-28: Urteil des Workers → das bisherige providers-Format. flat = Dienste
 // ohne Zusatzkosten in Rangfolge (freie Mediathek zuerst, dann Abos im Profil);
 // rent/buy bleiben leer, Leih-Angebote stehen nur als Namen in rentOnly.
@@ -1144,11 +1139,8 @@ function providersFromVerdict(v) {
   const direct = {};
   const prefilled = {};
   list.forEach(o => {
-    // nur http(s)-Links (bzw. fuer Sky gepruefte skygo://-Deep-Links) vom Worker uebernehmen
-    const okLink = typeof o.link === 'string' && (
-      /^https:\/\//.test(o.link) || (o.service === 'sky' && SKY_DEEPLINK_RE.test(o.link))
-    );
-    if (okLink) links[o.service] = o.link;
+    // nur http(s)-Links vom Worker uebernehmen
+    if (typeof o.link === 'string' && /^https:\/\//.test(o.link)) links[o.service] = o.link;
     direct[o.service] = !!o.direct && !!links[o.service];
     // aeltere Worker-Antworten ohne Feld gelten als vorbefuellt
     prefilled[o.service] = direct[o.service] && o.prefilled !== false;
@@ -1202,59 +1194,6 @@ async function fetchProviders(tmdbId, mediaType, title, info) {
   const map = await fetchAvailability([{ type: mediaType, id: tmdbId, title: title || '' }]);
   if (info) info.failKind = map.failKind || 'error';
   return map.get(`${mediaType}:${tmdbId}`) || null;
-}
-
-// WL-43: Sky-Go-Deep-Link (`skygo://series/<UUID>` / `skygo://watch/<UUID>`) lazy
-// ueber den Worker nachladen, damit POST /availability im 50-Subrequest-Budget bleibt.
-function hasSkyService(item) {
-  if (!item) return false;
-  return item.serviceId === 'sky' || pinnedService(item) === 'sky' || !!(item.providers?.flat || []).includes('sky');
-}
-
-function needsSkyDeepLink(item) {
-  if (!SYNC_ENABLED || !hasSkyService(item) || !item.tmdbId || !item.title) return false;
-  if (SKY_RESOLVED_RE.test(item.providers?.links?.sky || '')) return false;
-  const last = Number(item.providers?.skyCheckedAt) || 0;
-  return !last || (Date.now() - last > AVAILABILITY_STALE_MS);
-}
-
-async function resolveSkyDeepLink(item, onUpdate) {
-  if (!needsSkyDeepLink(item)) return;
-  const key = `${item.type}:${item.tmdbId}`;
-  let pending = skyLinkInFlight.get(key);
-  if (!pending) {
-    const qs = new URLSearchParams({
-      type: item.type,
-      id: String(item.tmdbId),
-      title: item.title,
-    });
-    pending = fetchT(`${WORKER_BASE}/sky-link?${qs.toString()}`, {
-      headers: { 'X-API-Key': SYNC_KEY },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .catch(() => null)
-      .finally(() => skyLinkInFlight.delete(key));
-    skyLinkInFlight.set(key, pending);
-  }
-  const data = await pending;
-  if (!data || typeof data.link !== 'string' || !SKY_DEEPLINK_RE.test(data.link)) return;
-  if (!items.includes(item)) return;
-  const prevLink = item.providers?.links?.sky || '';
-  const p = item.providers || { ...EMPTY_PROVIDERS };
-  item.providers = {
-    ...p,
-    links: { ...(p.links || {}), sky: data.link },
-    direct: { ...(p.direct || {}), sky: true },
-    prefilled: { ...(p.prefilled || {}), sky: !!data.prefilled },
-    skyCheckedAt: Date.now(),
-  };
-  if (SKY_RESOLVED_RE.test(data.link) && data.link !== prevLink) {
-    item.updatedAt = Date.now();
-    saveItems();
-  } else {
-    saveItemsLocal();
-  }
-  if (typeof onUpdate === 'function') onUpdate();
 }
 
 function tmdbPoster(path, size = 'w342') {
@@ -1792,7 +1731,6 @@ function addItem() {
 
   items.unshift(item);
   saveItems();
-  resolveSkyDeepLink(item);
   closeAddModal();
   renderFilterBar();
   renderWatchlist();
@@ -1913,11 +1851,6 @@ async function openDetail(item) {
   $detailModal.classList.add('open');
   openOverlay($detailModal, () => $closeBtn.focus());
 
-  // WL-43: Sky-Go-UUID parallel zur Verfuegbarkeitspruefung aufloesen.
-  resolveSkyDeepLink(item, () => {
-    if (requestId === detailRequestId) refreshDetailPin(item);
-  });
-
   // Fetch fresh providers in background
   const $providers = document.getElementById('detailProviders');
   $providers.innerHTML = '<div class="availability-loading"><div class="spinner"></div> Verfügbarkeit prüfen...</div>';
@@ -1941,9 +1874,6 @@ async function openDetail(item) {
   else saveItemsLocal();  // nur checkedAt neu — kein PUT /sync je Oeffnen
   $providers.dataset.loaded = '1';
   refreshDetailPin(item);
-  resolveSkyDeepLink(item, () => {
-    if (requestId === detailRequestId) refreshDetailPin(item);
-  });
   if (change && change !== 'updated') {
     renderFilterBar();
     renderWatchlist();
@@ -2082,12 +2012,6 @@ function pinService(item, id) {
   item.updatedAt = Date.now();
   saveItems();
   refreshDetailPin(item);
-  if (id === 'sky') {
-    const reqId = detailRequestId;
-    resolveSkyDeepLink(item, () => {
-      if (reqId === detailRequestId && $detailModal.classList.contains('open')) refreshDetailPin(item);
-    });
-  }
   renderFilterBar();
   renderShortlist();
   renderWatchlist();
@@ -2157,7 +2081,16 @@ function bindEvents() {
     if (e.target === $addModal) closeAddModal();
   });
   $detailModal.addEventListener('click', (e) => {
-    if (e.target === $detailModal) closeDetailModal();
+    if (e.target === $detailModal) { closeDetailModal(); return; }
+    const skyCta = e.target.closest('a.btn-primary-cta[data-sky-copy]');
+    if (skyCta) {
+      const title = skyCta.getAttribute('data-sky-copy') || '';
+      if (title) copyTextToClipboard(title);
+      showAutoAddToast(
+        title ? `„${title}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…',
+        'info',
+      );
+    }
   });
 
   // Search input
@@ -2694,35 +2627,55 @@ function applyProviders(item, providers) {
     const pinned = pinnedService(item);
     next = pinned || (providers.flat.includes(before) ? before : (providers.flat[0] || null));
   }
-  // WL-43: bereits aufgeloeste Sky-Go-UUID (`skygo://series/...` / `watch/...`)
-  // ueber 12-h-Batch-Checks hinweg bewahren, da POST /availability nur `skygo://` liefert.
-  const prevSky = item.providers?.links?.sky || '';
-  if (SKY_RESOLVED_RE.test(prevSky) && (providers.flat.includes('sky') || next === 'sky') && !SKY_RESOLVED_RE.test(providers.links?.sky || '')) {
-    providers = {
-      ...providers,
-      links: { ...(providers.links || {}), sky: prevSky },
-      direct: { ...(providers.direct || {}), sky: true },
-      prefilled: { ...(providers.prefilled || {}), sky: true },
-    };
-  }
-  if (item.providers?.skyCheckedAt && !providers.skyCheckedAt) {
-    providers = { ...providers, skyCheckedAt: item.providers.skyCheckedAt };
-  }
-  const strip = (p) => JSON.stringify({ ...(p || {}), checkedAt: 0, skyCheckedAt: 0 });
+  const strip = (p) => JSON.stringify({ ...(p || {}), checkedAt: 0 });
   const changedProviders = strip(item.providers) !== strip(providers);
   item.providers = providers;
   if (next === before) {
     if (changedProviders) { item.updatedAt = Date.now(); return 'updated'; }
     return null;
   }
-  item.updatedAt = Date.now();
   item.serviceId = next;
+  item.updatedAt = Date.now();
   if (before == null) return 'promoted';
   return next == null ? 'demoted' : 'changed';
 }
 
 function tmdbWatchUrl(item) {
   return `https://www.themoviedb.org/${item.type}/${item.tmdbId}/watch?locale=DE`;
+}
+
+// WL-43: Echter macOS-Desktop (ohne iPadOS im Desktop-Modus, das maxTouchPoints > 1 meldet).
+function isMacDesktop() {
+  const nav = typeof navigator !== 'undefined' ? navigator : null;
+  if (!nav) return false;
+  const ua = nav.userAgent || '';
+  if (/iphone|ipad|ipod|android/i.test(ua)) return false;
+  if ((nav.maxTouchPoints || 0) > 1) return false;
+  const platform = nav.userAgentData?.platform || nav.platform || '';
+  return /mac/i.test(platform) || /macintosh|mac os x/i.test(ua);
+}
+
+function copyTextToClipboard(text) {
+  if (!text) return false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return true;
+  }
+  try {
+    const prev = document.activeElement;
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    Object.assign(ta.style, { position: 'fixed', opacity: '0', pointerEvents: 'none' });
+    ($detailModal || document.body).appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (prev && typeof prev.focus === 'function') prev.focus();
+    return ok;
+  } catch (_) {
+    return false;
+  }
 }
 
 // Primaer-Aktion: direkt zum gewaehlten Anbieter (Link vom Worker: Such-Seite
@@ -2734,13 +2687,13 @@ function detailCtaHtml(item, svc) {
   if (!svc) return '<span class="detail-cta-slot"></span>';
   let direct = !!item.providers?.direct?.[svc.id];
   let link = direct ? item.providers.links[svc.id] : tmdbWatchUrl(item);
-  // Such-Seite ohne Titel-Parameter (Disney+, Paramount+, unaufgeloestes skygo://): ehrlich "suchen"
+  // Such-Seite ohne Titel-Parameter (Disney+, Paramount+): ehrlich "suchen"
   let prefilled = direct && item.providers?.prefilled?.[svc.id] !== false;
-  // WL-43: Altbestand mit altem sky.de/suche-Link sofort auf skygo:// heben,
-  // waehrend resolveSkyDeepLink im Hintergrund die Titel-UUID nachlaedt.
-  if (svc.id === 'sky' && direct && /^https:\/\/www\.sky\.de\/suche/.test(link || '')) {
-    link = 'skygo://';
-    prefilled = false;
+  // Selbstheilung fuer gecachte skygo://-Links aus dem ersten WL-43-Versuch:
+  // sofort auf den gueltigen https-Suchlink zurueckfuehren, damit iOS nie scheitert.
+  if (svc.id === 'sky' && direct && typeof link === 'string' && link.startsWith('skygo://')) {
+    link = SERVICE_SEARCH.sky.replace('{q}', encodeURIComponent(item.title || ''));
+    prefilled = true;
   }
   // WL-30: von Hand gesetzter Dienst ohne Worker-Link → eigene Kopie der Such-Vorlage
   if (!direct && pinnedService(item) === svc.id && SERVICE_SEARCH[svc.id]) {
@@ -2749,13 +2702,18 @@ function detailCtaHtml(item, svc) {
     direct = true;
     prefilled = tpl.includes('{q}');
   }
+  // WL-43: Sky Go DE hat weder Web-Player noch Inhalts-Deep-Links, startet auf
+  // macOS Desktop aber per `skygo://` die Sky Go App. Dort oeffnet der Klick die
+  // App und kopiert den Titel fuer die Suche (⌘V); iOS/iPadOS/Web bleiben beim
+  // fehlerfreien https-Suchlink (`sky.de/suche`).
+  if (svc.id === 'sky' && direct && isMacDesktop()) {
+    const skyLabel = 'Sky Go öffnen';
+    return `<a class="btn-primary-cta" href="skygo://" data-sky-copy="${escAttr(item.title || '')}" aria-label="${escAttr(skyLabel)} (kopiert Titel und startet Sky Go App)">
+        <span aria-hidden="true">▶</span> ${esc(skyLabel)} <span class="btn-cta-ext" aria-hidden="true">↗</span>
+      </a>`;
+  }
   const label = !direct ? `${svc.name}-Angebot auf TMDB` : prefilled ? `Bei ${svc.name} ansehen` : `Bei ${svc.name} suchen`;
-  // WL-43: Custom-App-Scheme (skygo://) ohne target="_blank", damit iOS Safari/PWA
-  // und macOS direkt die Sky Go App starten statt einen leeren Tab zu hinterlassen.
-  const isAppScheme = link.startsWith('skygo://');
-  const targetAttrs = isAppScheme ? '' : ' target="_blank" rel="noopener"';
-  const ariaHint = isAppScheme ? '(öffnet Sky Go App)' : '(öffnet neuen Tab)';
-  return `<a class="btn-primary-cta" href="${escAttr(link)}"${targetAttrs} aria-label="${escAttr(label)} ${ariaHint}">
+  return `<a class="btn-primary-cta" href="${escAttr(link)}" target="_blank" rel="noopener" aria-label="${escAttr(label)} (öffnet neuen Tab)">
         <span aria-hidden="true">▶</span> ${esc(label)} <span class="btn-cta-ext" aria-hidden="true">↗</span>
       </a>`;
 }
@@ -2828,7 +2786,6 @@ async function addFromMagazine(it) {
     };
     items.unshift(item);
     saveItems();
-    resolveSkyDeepLink(item);
     renderFilterBar();
     renderWatchlist();
     showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
@@ -2949,7 +2906,11 @@ if ($magTrack) {
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch((err) => {
       console.warn('Service Worker registration failed:', err);
     });
   });

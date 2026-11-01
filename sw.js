@@ -3,7 +3,8 @@
    ============================================ */
 
 // v3 (WL-33): /sync nicht mehr aus dem Cache; alter Laufzeit-Cache faellt weg
-const CACHE_VERSION = 'v3';
+// v4 (WL-43): App-Shell neu cachen (Sky-Go-Fix fuer iOS-PWA & macOS)
+const CACHE_VERSION = 'v4';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 
