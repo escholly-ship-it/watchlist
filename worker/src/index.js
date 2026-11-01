@@ -12,18 +12,16 @@
 //   POST /rebuild-taste  — manual taste-profile rebuild (auth: X-Admin-Key)
 //                          ?member=KEY → rebuild a specific member (default: owner)
 //   WL-34 (2026-10-27): Jede X-API-Key-Route (/sync, /magazine, /tmdb/*,
-//   /availability, /sky-link) nimmt nur bekannte Schluessel an: OWNER_SYNC_KEY,
-//   API_KEY, der Magazin-Roster (config:magazine_members) und die Liste
-//   config:sync_keys in KV. Die Liste steht nie im (oeffentlichen) Repo.
-//   Entfernen aus config:sync_keys sperrt nur, wenn der Schluessel weder Owner
-//   noch im Roster ist. PUT /sync: hoechstens MAX_SYNC_BYTES, kaputtes JSON -> 400.
+//   /availability) nimmt nur bekannte Schluessel an: OWNER_SYNC_KEY, API_KEY,
+//   der Magazin-Roster (config:magazine_members) und die Liste config:sync_keys
+//   in KV. Die Liste steht nie im (oeffentlichen) Repo. Entfernen aus
+//   config:sync_keys sperrt nur, wenn der Schluessel weder Owner noch im Roster
+//   ist. PUT /sync: hoechstens MAX_SYNC_BYTES, kaputtes JSON -> 400.
 //   GET  /tmdb/search    — TMDB-Suche fuer die App (auth: X-API-Key), ?q=
 //   GET  /tmdb/details   — TMDB-Details fuer die App (auth: X-API-Key), ?type=&id=
 //   POST /availability   — WL-28: bester Anbieter je Titel (auth: X-API-Key),
 //                          Body {items:[{type,id,title}]}, hoechstens
 //                          AVAILABILITY_BATCH_MAX Titel je Aufruf
-//   GET  /sky-link       — WL-43: Sky-Go-App-Deep-Link je Titel (auth: X-API-Key),
-//                          ?type=movie|tv&id=<tmdbId>&title=<titel>
 //
 // Scheduled handler (see wrangler.toml [triggers].crons) — WL-11 multi-tenant:
 //   "0 3 * * *"  → daily taste pre-warm for that day's roster member
@@ -70,14 +68,6 @@
 //   (ctx.waitUntil), ein D1-Fehler wird nur geloggt und bricht Sync nie.
 //   Fehlt das Binding, wird nicht gezaehlt. Gelesen wird aus der Cloud ueber
 //   den Cloudflare-Konnektor (d1_database_query).
-// WL-43 (2026-11-01): Direkte Sky-Go-Deep-Links (macOS & iOS). Sky hat keinen
-//   Web-Player; die App registriert `skygo://` (`skygo://series/<UUID>` fuer
-//   Serien, `skygo://watch/<UUID>` fuer Filme, `skygo://` als Startseiten-
-//   Fallback; eine Textsuche `skygo://search` gibt es nicht). POST /availability
-//   liefert ohne Zusatz-Subrequests `skygo://` (`prefilled: false`); GET /sky-link
-//   loest bei Bedarf die interne Sky-UUID ueber JustWatch GraphQL (exakter
-//   tmdbId-Abgleich fuer `packageId === 29`) und Skys Suggest-API
-//   (`entity.search.sky.com`, `x-skyott-territory: DE`) auf.
 
 import '../../sync-merge.js';
 
@@ -135,10 +125,10 @@ const PROVIDER_IDS_STR = Object.keys(PROVIDER_IDS)
 // search              = Such-Seite des Dienstes mit {q}; ohne {q} die leere Such-Seite
 //                       (Dienst nimmt keinen Titel-Parameter an); null → Link auf die
 //                       TMDB-Watch-Seite. Nur gemessene Vorlagen: Netflix, Magenta TV, Joyn,
-//                       Disney+ und Paramount+ am 2026-09-28 im Browser des Eigentuemers. Sky Go hat
-//                       keinen Web-Player, sondern oeffnet per `skygo://` die App (konkrete Titel-UUID
-//                       wird in WL-43 lazy ueber GET /sky-link nachgeladen). RTL+ ?query= eingeloggt
-//                       gemessen. HBO Max nur Such-Seite: der Titel-Link war nur mit aktivem Abo pruefbar.
+//                       Disney+ und Paramount+ am 2026-09-28 im Browser des Eigentuemers. Sky Go hat keine
+//                       Web-Suche; sky.de/suche?query= durchsucht die Sky-Seiten (kann einen
+//                       verfuegbaren Titel verfehlen). RTL+ ?query= eingeloggt gemessen. HBO Max
+//                       nur Such-Seite: der Titel-Link war nur mit aktivem Abo pruefbar.
 // Die Reihenfolge der 'free'-Eintraege ist ihre Rangfolge untereinander.
 const AVAILABILITY_SERVICES = [
   { id: 'arte',      kind: 'free',         tmdbIds: [234],        search: 'https://www.arte.tv/de/search/?q={q}' },
@@ -150,7 +140,7 @@ const AVAILABILITY_SERVICES = [
   { id: 'prime',     kind: 'subscription', tmdbIds: [9, 2100],    search: 'https://www.primevideo.com/search/ref=atv_nb_sug?phrase={q}' },
   { id: 'disney',    kind: 'subscription', tmdbIds: [337],        search: 'https://www.disneyplus.com/de-de/browse/search' },
   { id: 'apple',     kind: 'subscription', tmdbIds: [350],        search: 'https://tv.apple.com/de/search?term={q}' },
-  { id: 'sky',       kind: 'subscription', tmdbIds: [29],         search: 'skygo://' },
+  { id: 'sky',       kind: 'subscription', tmdbIds: [29],         search: 'https://www.sky.de/suche?query={q}' },
   { id: 'hbo',       kind: 'subscription', tmdbIds: [1899],       search: 'https://play.hbomax.com/search' },
   { id: 'paramount', kind: 'subscription', tmdbIds: [531],        search: 'https://www.paramountplus.com/de/search/' },
   { id: 'magenta',   kind: 'subscription', tmdbIds: [178],        search: 'https://web.magentatv.de/suche/vod_more_web/{q}' },
@@ -334,10 +324,6 @@ export default {
 
     if (url.pathname === '/availability' && request.method === 'POST') {
       return handleAvailability(request, env, apiKey);
-    }
-
-    if (url.pathname === '/sky-link' && request.method === 'GET') {
-      return handleSkyLink(url);
     }
 
     if (url.pathname === '/magazine' && request.method === 'GET') {
@@ -951,217 +937,6 @@ async function handleAvailability(request, env, apiKey) {
     results[key] = rankAvailability(de, profile, title, ref);
   }));
   return jsonResponse({ results, profile: profile.fromKv ? 'kv' : 'default' });
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// WL-43: Sky Go App Deep-Link je Titel (macOS & iOS)
-// ─────────────────────────────────────────────────────────────────────────
-
-const SKY_SUGGEST_BASE = 'https://entity.search.sky.com/suggest/v1/skygo/home/1/1/skyq';
-const JUSTWATCH_GRAPHQL_URL = 'https://apis.justwatch.com/graphql';
-const SKY_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SKY_JW_PROGRAMME_RE = /(?:#programme\/|\/programme\/)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
-const SKY_BONUS_RE = /^(?:trailer|featurette|making[- ]of|bonus|clip|vorschau|interview|teaser)\b/i;
-const SKY_FETCH_TIMEOUT_MS = 5000;
-
-const JUSTWATCH_SKY_QUERY = `
-query ($country: Country!, $language: Language!, $first: Int!, $filter: TitleFilter) {
-  popularTitles(country: $country, first: $first, filter: $filter) {
-    edges {
-      node {
-        content(country: $country, language: $language) {
-          title
-          originalTitle
-          externalIds { tmdbId }
-        }
-        offers(country: $country, platform: WEB) {
-          package { packageId shortName }
-          standardWebURL
-          deeplinkURL(platform: IOS)
-        }
-      }
-    }
-  }
-}`;
-
-function normSkyTitle(s) {
-  return String(s || '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
-}
-
-async function fetchSkyTimed(url, init = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), SKY_FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function querySkySuggest(term) {
-  const q = String(term || '').trim();
-  if (!q) return [];
-  const u = `${SKY_SUGGEST_BASE}?limit=10&src=svod&src=ott&term=${encodeURIComponent(q)}`;
-  try {
-    const resp = await fetchSkyTimed(u, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-        'x-skyott-territory': 'DE',
-        'x-skyott-language': 'de',
-        'x-skyott-proposition': 'SKYGO',
-        'x-skyott-provider': 'SKY',
-      },
-      cf: { cacheTtl: 86400, cacheEverything: true },
-    });
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    const list = Array.isArray(data && data.results) ? data.results : [];
-    return list.filter((r) =>
-      r &&
-      typeof r.uuid === 'string' &&
-      SKY_UUID_RE.test(r.uuid) &&
-      typeof r.t === 'string' &&
-      !SKY_BONUS_RE.test(r.t.trim()),
-    );
-  } catch (err) {
-    console.error('Sky suggest error:', err && err.message ? err.message : String(err));
-    return [];
-  }
-}
-
-async function queryJustWatchSky(ref, searchTitle) {
-  const objectType = ref.type === 'tv' ? 'SHOW' : 'MOVIE';
-  try {
-    const resp = await fetchSkyTimed(JUSTWATCH_GRAPHQL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-      },
-      body: JSON.stringify({
-        query: JUSTWATCH_SKY_QUERY,
-        variables: {
-          country: 'DE',
-          language: 'de',
-          first: 8,
-          filter: { objectTypes: [objectType], searchQuery: searchTitle },
-        },
-      }),
-    });
-    if (!resp.ok) return null;
-    const payload = await resp.json();
-    const edges = (((payload || {}).data || {}).popularTitles || {}).edges || [];
-    const hit = edges.find((e) => {
-      const tid = e && e.node && e.node.content && e.node.content.externalIds && e.node.content.externalIds.tmdbId;
-      return String(tid || '') === String(ref.id);
-    });
-    if (!hit || !hit.node) return null;
-    const content = hit.node.content || {};
-    const titles = [content.title, content.originalTitle].filter((t) => typeof t === 'string' && t.trim());
-    let programmeUuid = null;
-    for (const o of hit.node.offers || []) {
-      const pkg = o && o.package;
-      if (!pkg || (pkg.packageId !== 29 && pkg.shortName !== 'skg')) continue;
-      const m = String(o.deeplinkURL || o.standardWebURL || '').match(SKY_JW_PROGRAMME_RE);
-      if (m && SKY_UUID_RE.test(m[1])) {
-        programmeUuid = m[1].toLowerCase();
-        break;
-      }
-    }
-    return { titles, programmeUuid };
-  } catch (err) {
-    console.error('JustWatch Sky lookup error:', err && err.message ? err.message : String(err));
-    return null;
-  }
-}
-
-function pickUniqueSkyUuid(results, allowedNorms, wantKind) {
-  if (!allowedNorms || allowedNorms.size === 0) return null;
-  const uuids = new Set();
-  for (const r of results || []) {
-    if (wantKind === 'series') {
-      if (r.uuidtype !== 'series') continue;
-    } else if (r.uuidtype !== 'programme' || (r.type && r.type !== 'movie')) {
-      continue;
-    }
-    const nt = normSkyTitle(r.t);
-    if (nt && allowedNorms.has(nt)) uuids.add(r.uuid.toLowerCase());
-  }
-  return uuids.size === 1 ? [...uuids][0] : null;
-}
-
-async function resolveSkyGoLink(ref, title) {
-  const baseNorm = normSkyTitle(title);
-  if (!baseNorm) {
-    return { link: 'skygo://', direct: true, prefilled: false, resolved: false };
-  }
-
-  if (ref.type === 'movie') {
-    // Filme: JustWatch gleicht exakt gegen tmdbId ab und liefert fuer Sky Go DE
-    // (packageId 29) dieselbe programme-UUID wie Sky (z. B. auch bei deutschem
-    // TMDB-Untertitel wie "Halloween - Stelle dich deinem Schicksal" vs. "Halloween").
-    const jw = await queryJustWatchSky(ref, title);
-    if (jw && jw.programmeUuid) {
-      return { link: `skygo://watch/${jw.programmeUuid}`, direct: true, prefilled: true, resolved: true };
-    }
-    const allowed = new Set([baseNorm, ...((jw && jw.titles) || []).map(normSkyTitle)].filter(Boolean));
-    const seenTerms = new Set();
-    for (const term of [title, ...((jw && jw.titles) || [])]) {
-      const nt = normSkyTitle(term);
-      if (!nt || seenTerms.has(nt) || seenTerms.size >= 2) continue;
-      seenTerms.add(nt);
-      const uuid = pickUniqueSkyUuid(await querySkySuggest(term), allowed, 'movie');
-      if (uuid) return { link: `skygo://watch/${uuid}`, direct: true, prefilled: true, resolved: true };
-    }
-    return { link: 'skygo://', direct: true, prefilled: false, resolved: false };
-  }
-
-  // Serien: Sky Go erwartet die uebergeordnete series-UUID (`skygo://series/<UUID>`),
-  // waehrend JustWatch dort oft eine Episoden-programme-UUID fuehrt.
-  const allowed = new Set([baseNorm]);
-  const firstUuid = pickUniqueSkyUuid(await querySkySuggest(title), allowed, 'series');
-  if (firstUuid) {
-    return { link: `skygo://series/${firstUuid}`, direct: true, prefilled: true, resolved: true };
-  }
-
-  const jw = await queryJustWatchSky(ref, title);
-  const altTerms = [];
-  if (jw && Array.isArray(jw.titles)) {
-    for (const t of jw.titles) {
-      const nt = normSkyTitle(t);
-      if (nt) {
-        allowed.add(nt);
-        if (nt !== baseNorm) altTerms.push(t);
-      }
-    }
-  }
-  const prefix = title.split(/\s*(?::|-|–|—)\s*/)[0].trim();
-  if (prefix.length >= 3 && normSkyTitle(prefix) !== baseNorm) altTerms.push(prefix);
-
-  const tried = new Set([baseNorm]);
-  for (const term of altTerms) {
-    const nt = normSkyTitle(term);
-    if (!nt || tried.has(nt) || tried.size >= 3) continue;
-    tried.add(nt);
-    const uuid = pickUniqueSkyUuid(await querySkySuggest(term), allowed, 'series');
-    if (uuid) return { link: `skygo://series/${uuid}`, direct: true, prefilled: true, resolved: true };
-  }
-
-  return { link: 'skygo://', direct: true, prefilled: false, resolved: false };
-}
-
-async function handleSkyLink(url) {
-  const ref = parseMediaRef(url.searchParams.get('type'), url.searchParams.get('id'));
-  if (!ref) return jsonResponse({ error: 'type and id required' }, 400);
-  const title = (url.searchParams.get('title') || '').trim().slice(0, 200);
-  if (!title) return jsonResponse({ error: 'title required' }, 400);
-  return jsonResponse(await resolveSkyGoLink(ref, title));
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -54,7 +54,6 @@ const ROUTES = [
   ['/tmdb/search?q=a', { method: 'GET' }],
   ['/tmdb/details?type=movie&id=1', { method: 'GET' }],
   ['/availability', { method: 'POST', body: JSON.stringify({ items: [] }) }],
-  ['/sky-link?type=movie&id=1&title=A', { method: 'GET' }],
 ];
 
 test('fremder 40-Zeichen-Schluessel bekommt auf allen Routen 401', async () => {

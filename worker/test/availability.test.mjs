@@ -120,9 +120,8 @@ test('Abo-Suchlinks: Netflix, Magenta TV, Joyn mit Titel, Disney+ nur Such-Seite
   assert.equal(best(9).link, 'https://www.disneyplus.com/de-de/browse/search');
   assert.equal(best(9).direct, true);
   assert.equal(best(9).prefilled, false);
-  assert.equal(best(10).link, 'skygo://');
-  assert.equal(best(10).direct, true);
-  assert.equal(best(10).prefilled, false);
+  assert.equal(best(10).link, 'https://www.sky.de/suche?query=Stranger%20Things');
+  assert.equal(best(10).prefilled, true);
   assert.equal(best(12).link, 'https://plus.rtl.de/suche?query=Stranger%20Things');
   assert.equal(best(12).prefilled, true);
   assert.equal(best(13).link, 'https://play.hbomax.com/search');
