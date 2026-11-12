@@ -89,17 +89,31 @@
       <button class="sync-banner-btn" id="syncBannerBtn" type="button"></button>
     </div>
 
-    <!-- Kompakt-Kopf (WL-23): Filter + Woche als Pillen; Chips im Sheet, Teaser im Overlay -->
+    <!-- Navigation & Kompakt-Kopf (Magazin v3: Direkt-Umschalter Meine Liste | Für dich) -->
     <div class="pill-row" id="pillRow">
-      <button class="pill" id="pillFilter" aria-haspopup="dialog">
+      <div class="view-switcher" id="viewSwitcher" role="tablist" aria-label="Ansicht wählen">
+        <button class="view-tab active" id="tabList" role="tab" aria-selected="true" data-view="list" type="button">
+          <span>Meine Liste</span>
+          <span class="view-tab-badge hidden" id="tabListCount"></span>
+        </button>
+        <button class="view-tab" id="tabDiscover" role="tab" aria-selected="false" data-view="discover" type="button">
+          <span class="view-tab-spark" aria-hidden="true">✦</span>
+          <span>Für dich</span>
+          <span class="view-tab-badge accent hidden" id="tabDiscoverCount"></span>
+        </button>
+      </div>
+      <button class="pill" id="pillFilter" aria-haspopup="dialog" type="button">
         <span class="pill-label">Filter</span>
         <span class="pill-value" id="pillFilterValue">Alle · Neu</span>
       </button>
-      <button class="pill pill-accent hidden" id="pillWoche" aria-haspopup="dialog">
-        <span class="pill-label" id="pillWocheLabel">Woche</span>
+      <button class="pill pill-accent hidden" id="pillWoche" type="button" aria-hidden="true" tabindex="-1">
+        <span class="pill-label" id="pillWocheLabel">Für dich</span>
         <span class="pill-value" id="pillWocheValue"></span>
       </button>
     </div>
+
+    <!-- Für-Dich Streaming-Hub (Magazin v3) -->
+    <section class="discover-view hidden" id="discoverView" aria-label="Persönliche Empfehlungen"></section>
 
     <!-- Shortlist -->
     <section class="shortlist-section hidden" id="shortlistSection">
@@ -249,7 +263,21 @@
       </div>
     </div>
 
-    <!-- Wochen-Magazin Reader (WL-5) -->
+    <!-- Inline YouTube Trailer Modal (Magazin v3) -->
+    <div class="modal-overlay" id="trailerModal" role="dialog" aria-modal="true" aria-labelledby="trailerModalTitle">
+      <div class="modal trailer-modal">
+        <div class="modal-header trailer-modal-header">
+          <h2 id="trailerModalTitle">Trailer</h2>
+          <button class="modal-close" id="trailerModalClose" aria-label="Trailer schließen" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="trailer-stage" id="trailerStage"></div>
+        <div class="trailer-footer" id="trailerFooter"></div>
+      </div>
+    </div>
+
+    <!-- Legacy Reader-Anker (ausgeblendet fuer Rueckwaertskompatibilitaet) -->
     <div class="magazine-reader hidden" id="magazineReader" role="dialog" aria-label="Wochen-Magazin">
       <div class="magazine-reader-top">
         <span class="magazine-reader-issue" id="magazineIssue"></span>

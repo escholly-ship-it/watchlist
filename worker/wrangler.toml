@@ -17,16 +17,15 @@ binding = "NUTZUNG_DB"
 database_name = "watchlist-nutzung"
 database_id = "3d0dc369-ed32-49fe-8605-52dd6281ea75"
 
-# WL-11 (2026-06-14): per-member magazines via stateless daily round-robin.
-#   "0 16 * * *" daily magazine build — 16:00 UTC = 18:00 MESZ — for that day's
-#                roster member (idx = floor(scheduledTime/86400000) % len).
-#   "0 3  * * *" daily taste pre-warm — 03:00 UTC — same member as the 16:00 run
-#                that day, so the magazine build finds a warm taste cache.
-#   One member per invocation keeps each run under the Free 50-subrequest cap;
-#   2 cron triggers (account limit is 5). Roster lives in KV
-#   config:magazine_members (owner always included). Was WL-5: weekly FRI/SUN.
+# Magazin v3 (2026-11-12): Taeglich frische Magazine fuer ALLE Familienprofile
+# innerhalb des kostenlosen 5-Cron-Limits (je Invocation eigenes 50-Subrequest-Budget):
+#   "0 3 * * *"  — 03:00 UTC: rotierender 30-Titel-Taste-Prewarm ueber den Roster
+#   "15 4 * * *" — 04:15 UTC: taeglicher Morgen-Build fuer Roster-Slot 0 (Owner)
+#   "30 4 * * *" — 04:30 UTC: taeglicher Morgen-Build fuer Roster-Slot 1
+#   "45 4 * * *" — 04:45 UTC: taeglicher Morgen-Build fuer Roster-Slot 2
+#   "0 5 * * *"  — 05:00 UTC: taeglicher Morgen-Build fuer Roster-Slot 3
 [triggers]
-crons = ["0 16 * * *", "0 3 * * *"]
+crons = ["0 3 * * *", "15 4 * * *", "30 4 * * *", "45 4 * * *", "0 5 * * *"]
 
 # Observability — make `wrangler tail` show structured logs.
 [observability]
