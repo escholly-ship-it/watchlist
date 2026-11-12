@@ -265,21 +265,28 @@ let searchSeq = 0;  // WL-41: nur die juengste Suchanfrage darf rendern
 const SHORTLIST_MAX = 5;
 
 // ---- DOM ----
+const $app = document.getElementById('app');
 const $watchlist = document.getElementById('watchlist');
 const $shortlistSection = document.getElementById('shortlistSection');
 const $shortlistTrack = document.getElementById('shortlistTrack');
 const $emptyState = document.getElementById('emptyState');
 const $loadingState = document.getElementById('loadingState');
 const $filterBar = document.getElementById('filterBar');
-// WL-23 Kompakt-Kopf
+// WL-23 + Magazin v3 Kompakt-Kopf & View-Switcher
 const $pillFilter = document.getElementById('pillFilter');
 const $pillFilterValue = document.getElementById('pillFilterValue');
 const $pillWoche = document.getElementById('pillWoche');
 const $pillWocheLabel = document.getElementById('pillWocheLabel');
 const $pillWocheValue = document.getElementById('pillWocheValue');
+const $tabList = document.getElementById('tabList');
+const $tabDiscover = document.getElementById('tabDiscover');
+const $tabListCount = document.getElementById('tabListCount');
+const $tabDiscoverCount = document.getElementById('tabDiscoverCount');
+const $discoverView = document.getElementById('discoverView');
 const $filterModal = document.getElementById('filterModal');
 const $magazineModal = document.getElementById('magazineModal');
 const $magazineModalBody = document.getElementById('magazineModalBody');
+const $trailerModal = document.getElementById('trailerModal');
 const $seenSection = document.getElementById('seenSection');
 const $seenBar = document.getElementById('seenBar');
 const $seenCount = document.getElementById('seenCount');
@@ -343,7 +350,7 @@ function closeOverlay(overlayEl, restoreFocus = true){
 }
 
 function setBackgroundInert(on){
-  document.querySelectorAll('#app > header, #app > #pillRow, #app > #shortlistSection, #app > #watchlist, #app > #seenSection').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
+  document.querySelectorAll('#app > header, #app > #pillRow, #app > #discoverView, #app > #shortlistSection, #app > #watchlist, #app > #seenSection').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
 }
 
 function focusables(root){
@@ -431,6 +438,8 @@ async function applySyncKey(rawInput) {
   if (SYNC_KEY && SYNC_KEY !== parsed) {
     items = [];
     deletedItems = [];
+    magazine = null;
+    activeMagProvider = 'all';
     lsRemove(UNSENT_KEY);
     saveItemsLocal();
   }
@@ -1455,6 +1464,8 @@ function renderWatchlist() {
 
   renderSeenSection(seen);
   updateFilterPill();
+  updateViewCounts();
+  if (activeMainView === 'discover') refreshDiscoverButtonStates();
 }
 
 // WL-23: Gesehen-Sektion — Leiste immer (ab 1 Titel), Raster nur aufgeklappt.
@@ -1784,6 +1795,7 @@ async function openDetail(item) {
       ${detailCtaHtml(item, svc)}
       <div class="detail-pin-slot" id="detailPinSlot"></div>
       <div class="detail-actions-row">
+        <button class="btn-trailer" type="button" data-id="${item.id}">▶ Trailer</button>
         ${!item.watched ? `<button class="btn-shortlist${isOnShortlist(item.id) ? ' on-shortlist' : ''}" data-id="${item.id}"${!isOnShortlist(item.id) && isShortlistFull() ? ' disabled title="Shortlist voll (max 5)"' : ''}>
           ${isOnShortlist(item.id) ? '★ Shortlist' : '☆ Shortlist'}
         </button>` : ''}
@@ -1801,6 +1813,11 @@ async function openDetail(item) {
   `;
 
   // Bind actions
+  const $trailerBtn = $content.querySelector('.btn-trailer');
+  if ($trailerBtn) {
+    $trailerBtn.addEventListener('click', () => openTrailerForWatchlistItem(item));
+  }
+
   const $shortlistBtn = $content.querySelector('.btn-shortlist');
   if ($shortlistBtn) {
     $shortlistBtn.addEventListener('click', () => {
@@ -2139,11 +2156,20 @@ function bindEvents() {
     if (e.target === $filterModal) closeFilterSheet();
   });
 
-  $pillWoche.addEventListener('click', openMagazineModal);
+  $pillWoche.addEventListener('click', () => switchMainView('discover'));
+  if ($tabList) $tabList.addEventListener('click', () => switchMainView('list'));
+  if ($tabDiscover) $tabDiscover.addEventListener('click', () => switchMainView('discover'));
   document.getElementById('magazineModalClose').addEventListener('click', () => closeMagazineModal());
   $magazineModal.addEventListener('click', (e) => {
     if (e.target === $magazineModal) closeMagazineModal();
   });
+  const $trailerClose = document.getElementById('trailerModalClose');
+  if ($trailerClose) $trailerClose.addEventListener('click', closeTrailerModal);
+  if ($trailerModal) {
+    $trailerModal.addEventListener('click', (e) => {
+      if (e.target === $trailerModal) closeTrailerModal();
+    });
+  }
 
   $seenBar.addEventListener('click', () => {
     uiState.seenOpen = !uiState.seenOpen;
@@ -2259,11 +2285,12 @@ function bindEvents() {
     });
   }
 
-  // WL-23 Escape-Kette: oberstes Overlay zuerst (Reader > Sheet/Overlay > Pin > Detail > Add > Sync).
+  // WL-23 + Magazin v3 Escape-Kette: oberstes Overlay zuerst (Trailer > Reader > Sheet/Overlay > Pin > Detail > Add > Sync).
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const $reader = document.getElementById('magazineReader');
-      if ($reader && !$reader.classList.contains('hidden')) closeMagazineReader();
+      if ($trailerModal && $trailerModal.classList.contains('open')) closeTrailerModal();
+      else if ($reader && !$reader.classList.contains('hidden')) closeMagazineReader();
       else if ($filterModal.classList.contains('open')) closeFilterSheet();
       else if ($magazineModal.classList.contains('open')) closeMagazineModal();
       else if ($pinModal.classList.contains('open')) closePinSheet();
@@ -2274,11 +2301,18 @@ function bindEvents() {
   });
 }
 
-// ---- Wochen-Magazin (WL-5) ----
-const MAGAZINE_URL = 'https://watchlist-sync.escholly.workers.dev/magazine';
+// ---- Für-Dich Streaming-Hub (Magazin v3) ----
+const MAGAZINE_URL = `${WORKER_BASE}/magazine`;
+const MAGAZINE_FEEDBACK_URL = `${WORKER_BASE}/magazine/feedback`;
+const MAGAZINE_REFRESH_URL = `${WORKER_BASE}/magazine/refresh`;
 let magazine = null;
-let magCurrentIdx = 0;        // current card in the reader (driven by IntersectionObserver)
-let magObserver = null;       // IntersectionObserver tracking the most-visible card
+let activeMainView = 'list';      // 'list' | 'discover'
+let activeMagProvider = 'all';    // 'all' | serviceId | '__upcoming__'
+let magRefreshing = false;
+let magCurrentIdx = 0;            // legacy reader compat
+let magObserver = null;
+let trailerPrevFocus = null;
+const trailerCache = new Map();   // "type:id" -> trailerKey | ''
 
 const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -2286,7 +2320,7 @@ const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
 async function fetchMagazine() {
   if (!SYNC_ENABLED) return;
   try {
-    const res = await fetchT(MAGAZINE_URL, { headers: { 'X-API-Key': SYNC_KEY } });
+    const res = await fetchT(MAGAZINE_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
     magazine = data.magazine || null;
@@ -2297,7 +2331,20 @@ async function fetchMagazine() {
 
 function magazineItems() {
   if (!magazine || !Array.isArray(magazine.sections)) return [];
-  return magazine.sections.flatMap(s => (s.items || []).map(it => ({ ...it, _section: s.id })));
+  return magazine.sections.flatMap((s) => (s.items || []).map((it) => ({
+    ...it,
+    key: it.key || `${it.type || 'movie'}_${it.tmdb_id}`,
+    _section: s.id,
+  })));
+}
+
+function findMagazineItem(key) {
+  return magazineItems().find((it) => it.key === key) || null;
+}
+
+function findWatchlistItemForMag(it) {
+  if (!it) return null;
+  return items.find((x) => x.tmdbId === it.tmdb_id && x.type === it.type) || null;
 }
 
 function formatIssueDate(iso) {
@@ -2314,67 +2361,484 @@ function formatShortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
 }
 
-// WL-23: aus renderMagazineTeaser destilliert — die Pille traegt nur Woche + Zahl,
-// der Teaser lebt im Overlay (on-demand beim Oeffnen gerendert).
-function renderMagazinePill() {
-  const all = magazineItems();
-  // Empty-State-Strategie (WL-17/REQ-P3-K): ohne Magazin-Daten blendet die
-  // Pille aus (sekundaere Schiene, s. renderShortlist); #pillFilter nimmt
-  // dann die volle Breite (flex).
-  if (all.length === 0) { $pillWoche.classList.add('hidden'); return; }
-  const week = magazine.issue ? magazine.issue.week : '';
-  $pillWocheLabel.textContent = week ? `Woche ${week}` : 'Streaming-Woche';
-  $pillWocheValue.textContent = `${all.length} Titel`;
-  $pillWoche.classList.remove('hidden');
+function matchPctForMag(it) {
+  if (typeof it.match_pct === 'number' && it.match_pct > 0) return Math.round(it.match_pct);
+  if (typeof it.taste_score === 'number' && it.taste_score > 0) {
+    return Math.max(70, Math.min(98, Math.round(it.taste_score * 100)));
+  }
+  return null;
 }
 
-// WL-23: Sichtbarkeits-Regime des Magazin-Overlays ist AUSSCHLIESSLICH .open;
-// der Body wird bei jedem Oeffnen frisch gerendert, nie waehrend es offen ist.
-function renderMagazineModalBody() {
-  const all = magazineItems();
-  const thumbs = all.slice(0, 12)
-    .map(it => {
-      const url = tmdbPoster(it.poster_path, 'w185');
-      return url ? `<img class="mag-teaser-thumb" src="${escAttr(url)}" alt="" loading="lazy">` : '';
-    }).join('');
+function updateViewCounts() {
+  if ($tabListCount) {
+    const openCount = items.filter((i) => !i.watched).length;
+    $tabListCount.textContent = openCount > 0 ? String(openCount) : '';
+    $tabListCount.classList.toggle('hidden', openCount === 0);
+  }
+  if ($tabDiscoverCount) {
+    const all = magazineItems();
+    const freshCount = all.filter((it) => !findWatchlistItemForMag(it)).length;
+    const shown = freshCount > 0 ? freshCount : all.length;
+    $tabDiscoverCount.textContent = shown > 0 ? String(shown) : '';
+    $tabDiscoverCount.classList.toggle('hidden', shown === 0);
+  }
+}
 
-  const neu = (magazine.counts && magazine.counts.neu) || 0;
-  const dem = (magazine.counts && magazine.counts.demnaechst) || 0;
-  // WL-22: dritte Rubrik "entdeckt" (Katalog-Empfehlungen). Ohne sie zeigt der
-  // Teaser bei neu=0 "0 neue Titel", obwohl die Ausgabe gefuellt ist.
-  const ent = (magazine.counts && magazine.counts.entdeckt) || 0;
-  const subParts = [];
-  if (neu) subParts.push(neu === 1 ? '1 neuer Titel' : `${neu} neue Titel`);
-  if (dem) subParts.push(dem === 1 ? '1 Ausblick' : `${dem} Ausblicke`);
-  if (ent) subParts.push(ent === 1 ? '1 Entdeckung' : `${ent} Entdeckungen`);
-  const sub = subParts.length > 0
-    ? `${subParts.join(' · ')}, kuratiert für deinen Geschmack`
-    : `${all.length} Titel, kuratiert für deinen Geschmack`;
-  const week = magazine.issue ? magazine.issue.week : '';
-  $magazineModalBody.innerHTML = `
-    <div class="mag-teaser-card in-modal">
-      <div class="mag-teaser-head">
-        <span class="mag-teaser-label">Streaming-Woche</span>
-        <span class="mag-teaser-issue">Nr. ${esc(String(week))} · ${esc(formatIssueDate(magazine.issue && magazine.issue.date))}</span>
+function switchMainView(view) {
+  const next = view === 'discover' ? 'discover' : 'list';
+  if (next === 'discover' && !SYNC_ENABLED) {
+    openSyncModal();
+    return;
+  }
+  activeMainView = next;
+  if ($tabList) {
+    $tabList.classList.toggle('active', next === 'list');
+    $tabList.setAttribute('aria-selected', String(next === 'list'));
+  }
+  if ($tabDiscover) {
+    $tabDiscover.classList.toggle('active', next === 'discover');
+    $tabDiscover.setAttribute('aria-selected', String(next === 'discover'));
+  }
+  if ($app) $app.classList.toggle('view-discover', next === 'discover');
+  if ($discoverView) $discoverView.classList.toggle('hidden', next !== 'discover');
+  if (next === 'discover') {
+    renderDiscoverView();
+  }
+}
+
+function renderMagazinePill() {
+  // Die fruehere Sekundaer-Pille weicht dem direkten Top-Tab "Für dich"
+  if ($pillWoche) $pillWoche.classList.add('hidden');
+  updateViewCounts();
+  if (activeMainView === 'discover') {
+    renderDiscoverView();
+  }
+}
+
+function filterMagazineByProvider(list, provFilter) {
+  if (!provFilter || provFilter === 'all') return list;
+  if (provFilter === '__upcoming__') {
+    return list.filter((it) => it.is_upcoming || !(Array.isArray(it.providers_app) && it.providers_app.length > 0));
+  }
+  return list.filter((it) => Array.isArray(it.providers_app) && it.providers_app.includes(provFilter));
+}
+
+function buildTasteSummaryHtml() {
+  const ts = (magazine && magazine.taste_summary) || null;
+  const issueDate = formatIssueDate(magazine && magazine.issue && magazine.issue.date);
+  const issueLabel = issueDate ? `Stand: ${esc(issueDate)}` : 'Täglich frisch kuratiert';
+
+  let lineHtml = 'Kuratierte Neuheiten & Empfehlungen passend zu deinen Streaming-Diensten.';
+  const wlCount = ts && typeof ts.watchlist_count === 'number' ? ts.watchlist_count : items.length;
+  const topGenres = (ts && Array.isArray(ts.top_genres) ? ts.top_genres : []).slice(0, 3);
+  const seeds = (ts && Array.isArray(ts.seed_titles) ? ts.seed_titles : []).slice(0, 2);
+
+  if (wlCount > 0 && topGenres.length > 0) {
+    const seedPart = seeds.length > 0 ? ` · Anker: <strong>${esc(seeds.join(', '))}</strong>` : '';
+    lineHtml = `Gelernt aus <strong>${wlCount} ${wlCount === 1 ? 'Titel' : 'Titeln'}</strong> · Fokus: <strong>${esc(topGenres.join(', '))}</strong>${seedPart}`;
+  } else if (wlCount > 0) {
+    lineHtml = `Gelernt aus <strong>${wlCount} ${wlCount === 1 ? 'Titel' : 'Titeln'}</strong> auf deiner persönlichen Watchlist.`;
+  }
+
+  return `
+    <div class="mag-taste-bar">
+      <div class="mag-taste-info">
+        <div class="mag-taste-kicker">
+          <span>✦ Dein Geschmacksprofil</span>
+          <span class="mag-taste-issue">${issueLabel}</span>
+        </div>
+        <div class="mag-taste-line">${lineHtml}</div>
       </div>
-      <p class="mag-teaser-sub">${sub}</p>
-      <div class="mag-teaser-thumbs">${thumbs}</div>
-      <button class="mag-teaser-btn" id="magReadBtn">Magazin lesen</button>
+      <button class="btn-mag-refresh${magRefreshing ? ' spinning' : ''}" id="btnMagRefresh" type="button" data-mag-refresh="1"${magRefreshing ? ' disabled' : ''} title="Frische Auswahl passend zu deinem Profil mischen">
+        <span class="refresh-icon" aria-hidden="true">↻</span>
+        <span>${magRefreshing ? 'Mischt…' : 'Neu mischen'}</span>
+      </button>
     </div>`;
-  document.getElementById('magReadBtn').addEventListener('click', () => {
-    // Fokus-Ausnahme Overlay->Reader: Rueckgabe unterdruecken, sonst landet der
-    // Fokus im geschlossenen Overlay; der Reader setzt ihn selbst (openOverlay).
-    closeMagazineModal({ restoreFocus: false });
-    $pillWoche.focus();
-    openMagazineReader();
+}
+
+function buildProviderFilterBarHtml(all) {
+  const counts = new Map();
+  let upcomingNoSvc = 0;
+  for (const it of all) {
+    const provs = Array.isArray(it.providers_app) ? it.providers_app : [];
+    const seenInItem = new Set();
+    for (const id of provs) {
+      if (SERVICES.some((s) => s.id === id) && !seenInItem.has(id)) {
+        seenInItem.add(id);
+        counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    }
+    if (provs.length === 0 || it.is_upcoming) upcomingNoSvc++;
+  }
+
+  // Falls aktiver Filter nicht mehr vorkommt, sauber auf Alle zurueckfallen
+  if (activeMagProvider !== 'all') {
+    if (activeMagProvider === '__upcoming__' && upcomingNoSvc === 0) activeMagProvider = 'all';
+    else if (activeMagProvider !== '__upcoming__' && !counts.has(activeMagProvider)) activeMagProvider = 'all';
+  }
+
+  const preferredOrder = (magazine && magazine.taste_summary && Array.isArray(magazine.taste_summary.top_services))
+    ? magazine.taste_summary.top_services
+    : [];
+  const orderedIds = Array.from(counts.keys()).sort((a, b) => {
+    const pa = preferredOrder.indexOf(a);
+    const pb = preferredOrder.indexOf(b);
+    if (pa !== -1 || pb !== -1) {
+      if (pa === -1) return 1;
+      if (pb === -1) return -1;
+      if (pa !== pb) return pa - pb;
+    }
+    return (counts.get(b) || 0) - (counts.get(a) || 0);
+  });
+
+  const chips = [
+    `<button class="mag-prov-chip${activeMagProvider === 'all' ? ' active' : ''}" type="button" data-mag-prov="all">
+      <span>Alle Dienste</span><span class="mag-prov-count">${all.length}</span>
+    </button>`,
+  ];
+
+  for (const id of orderedIds) {
+    const svc = SERVICES.find((s) => s.id === id);
+    if (!svc) continue;
+    chips.push(`<button class="mag-prov-chip${activeMagProvider === id ? ' active' : ''}" type="button" data-mag-prov="${escAttr(id)}">
+      ${svcInlineLogoHtml(svc)}<span>${esc(svc.name)}</span><span class="mag-prov-count">${counts.get(id)}</span>
+    </button>`);
+  }
+
+  if (upcomingNoSvc > 0) {
+    chips.push(`<button class="mag-prov-chip${activeMagProvider === '__upcoming__' ? ' active' : ''}" type="button" data-mag-prov="__upcoming__">
+      <span>🗓️ Demnächst</span><span class="mag-prov-count">${upcomingNoSvc}</span>
+    </button>`);
+  }
+
+  return `<div class="mag-provider-bar" role="toolbar" aria-label="Empfehlungen nach Anbieter filtern">${chips.join('')}</div>`;
+}
+
+function primaryServiceForMag(it) {
+  const provs = Array.isArray(it.providers_app) ? it.providers_app : [];
+  if (activeMagProvider && activeMagProvider !== 'all' && activeMagProvider !== '__upcoming__' && provs.includes(activeMagProvider)) {
+    return SERVICES.find((s) => s.id === activeMagProvider) || null;
+  }
+  for (const id of provs) {
+    const svc = SERVICES.find((s) => s.id === id);
+    if (svc) return svc;
+  }
+  return null;
+}
+
+function magArtFallback(img) {
+  if (!img) return;
+  const fb = img.dataset.fallback;
+  if (fb && img.dataset.triedFallback !== '1') {
+    img.dataset.triedFallback = '1';
+    img.src = fb;
+    return;
+  }
+  if (img.classList.contains('mag-hub-art')) {
+    const ph = document.createElement('div');
+    ph.className = 'mag-hub-ph';
+    ph.setAttribute('aria-hidden', 'true');
+    ph.textContent = '🎬';
+    img.replaceWith(ph);
+  } else {
+    img.remove();
+  }
+}
+
+function spotlightHeroHtml(it) {
+  const posterFb = tmdbPoster(it.poster_path, 'w780');
+  const bg = (it.backdrop_path ? `${TMDB_IMG}/w1280${it.backdrop_path}` : null) || posterFb;
+  const svc = primaryServiceForMag(it);
+  const matchPct = matchPctForMag(it);
+  const wlItem = findWatchlistItemForMag(it);
+  const onList = !!wlItem;
+  const onShort = !!(wlItem && isOnShortlist(wlItem.id));
+
+  const badgeDate = it.upcoming_date || it.release_date;
+  let provPill = '';
+  if (svc) {
+    provPill = `<span class="mag-prov-pill">${svcInlineLogoHtml(svc)}${esc(svc.name)}</span>`;
+  } else if (it.is_upcoming && badgeDate) {
+    provPill = `<span class="mag-prov-pill upcoming">🗓️ Ab ${esc(formatShortDate(badgeDate))}</span>`;
+  }
+
+  const sectionLabel = it._section === 'demnaechst'
+    ? 'Vorab-Highlight'
+    : (it._section === 'entdeckt' ? 'Top-Match für dich' : 'Blockbuster & Neu im Abo');
+  const metaParts = [esc(sectionLabel)];
+  if (it.year) metaParts.push(esc(String(it.year)));
+  if (it.type === 'tv') {
+    metaParts.push(it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : 'Serie');
+  } else {
+    metaParts.push(it.runtime ? `Film · ${it.runtime} Min.` : 'Film');
+  }
+  if (it.rating) metaParts.push(`★ ${esc(String(it.rating))}`);
+  if (it.certification) metaParts.push(`FSK ${esc(String(it.certification))}`);
+
+  const fanNote = it.fan_of && (!it.reason || !it.reason.includes(it.fan_of))
+    ? ` · Für Fans von „${esc(it.fan_of)}"`
+    : '';
+  const reasonText = it.reason
+    ? `${esc(it.reason)}${fanNote}`
+    : `Passend zu deinem Geschmacksprofil ausgewählt${fanNote}`;
+
+  const addLabel = onList
+    ? '✓ Gemerkt'
+    : (it.is_upcoming && !svc ? '+ Vormerken' : '+ Merkliste');
+
+  return `
+    <article class="mag-spot-hero" data-mag-key="${escAttr(it.key)}">
+      ${bg ? `<img class="mag-spot-bg" src="${escAttr(bg)}"${posterFb && posterFb !== bg ? ` data-fallback="${escAttr(posterFb)}"` : ''} alt="" loading="eager" onerror="magArtFallback(this)">` : ''}
+      <div class="mag-spot-scrim"></div>
+      <div class="mag-spot-top">
+        <div class="mag-spot-badges">
+          ${provPill}
+          ${matchPct ? `<span class="mag-match-chip">${matchPct}% Match</span>` : ''}
+        </div>
+        <button class="mag-spot-dismiss" type="button" data-mag-action="dismiss" data-mag-key="${escAttr(it.key)}" aria-label="${escAttr(it.title)} ausblenden" title="Nicht mein Geschmack — ausblenden">✕</button>
+      </div>
+      <div class="mag-spot-body">
+        <div class="mag-spot-meta">${metaParts.join(' <span class="sep">·</span> ')}</div>
+        <h2 class="mag-spot-title" data-mag-action="detail" data-mag-key="${escAttr(it.key)}">${esc(it.title)}</h2>
+        ${it.overview ? `<p class="mag-spot-overview">${esc(it.overview)}</p>` : ''}
+        <div class="mag-spot-reason">
+          <strong>✦ Warum für dich:</strong>
+          <span>${reasonText}</span>
+        </div>
+        <div class="mag-spot-actions">
+          <button class="btn-spot-trailer" type="button" data-mag-action="trailer" data-mag-key="${escAttr(it.key)}">
+            <span aria-hidden="true">▶</span><span>Trailer</span>
+          </button>
+          <button class="btn-spot-add${onList ? ' added' : ''}" type="button" data-mag-action="add" data-mag-key="${escAttr(it.key)}">${esc(addLabel)}</button>
+          <button class="btn-spot-shortlist${onShort ? ' active' : ''}" type="button" data-mag-action="shortlist" data-mag-key="${escAttr(it.key)}" title="${onShort ? 'Auf deiner Shortlist' : 'Direkt auf Merkliste + Top-5-Shortlist setzen'}">
+            <span aria-hidden="true">${onShort ? '★' : '☆'}</span><span class="shortlist-word">Shortlist</span>
+          </button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function hubCardHtml(it) {
+  const posterFb = tmdbPoster(it.poster_path, 'w500');
+  const art = tmdbBackdrop(it.backdrop_path) || posterFb;
+  const svc = primaryServiceForMag(it);
+  const matchPct = matchPctForMag(it);
+  const wlItem = findWatchlistItemForMag(it);
+  const onList = !!wlItem;
+  const badgeDate = it.upcoming_date || it.release_date;
+
+  const marker = svc
+    ? svcMarkerHtml(svc)
+    : `<div class="card-badge-vorgemerkt">${it.is_upcoming && badgeDate ? `ab ${esc(formatShortDate(badgeDate))}` : 'Vorschau'}</div>`;
+
+  const metaBits = [];
+  if (it.year) metaBits.push(esc(String(it.year)));
+  metaBits.push(it.type === 'tv' ? 'Serie' : 'Film');
+  if (it.rating) metaBits.push(`★ ${esc(String(it.rating))}`);
+  if (it.genres && it.genres[0]) metaBits.push(esc(it.genres[0]));
+
+  const reason = it.reason || (it.fan_of ? `Für Fans von „${it.fan_of}"` : 'Passend zu deinem Profil');
+  const addLabel = onList
+    ? '✓ Gemerkt'
+    : (it.is_upcoming && !svc ? '+ Vormerken' : '+ Merkliste');
+
+  return `
+    <article class="mag-hub-card" data-mag-key="${escAttr(it.key)}">
+      <div class="mag-hub-media" data-mag-action="detail" data-mag-key="${escAttr(it.key)}">
+        ${art ? `<img class="mag-hub-art" src="${escAttr(art)}"${posterFb && posterFb !== art ? ` data-fallback="${escAttr(posterFb)}"` : ''} alt="" loading="lazy" onerror="magArtFallback(this)">` : '<div class="mag-hub-ph" aria-hidden="true">🎬</div>'}
+        ${marker}
+        ${matchPct ? `<span class="mag-hub-match">${matchPct}%</span>` : ''}
+        <button class="mag-hub-trailer" type="button" data-mag-action="trailer" data-mag-key="${escAttr(it.key)}" aria-label="Trailer zu ${escAttr(it.title)} abspielen">▶ Trailer</button>
+      </div>
+      <div class="mag-hub-body">
+        <h3 class="mag-hub-title" data-mag-action="detail" data-mag-key="${escAttr(it.key)}">${esc(it.title)}</h3>
+        <div class="mag-hub-meta">${metaBits.join(' · ')}</div>
+        <p class="mag-hub-reason">${esc(reason)}</p>
+        <div class="mag-hub-actions">
+          <button class="btn-hub-add${onList ? ' added' : ''}" type="button" data-mag-action="add" data-mag-key="${escAttr(it.key)}">${esc(addLabel)}</button>
+          <button class="btn-hub-dismiss" type="button" data-mag-action="dismiss" data-mag-key="${escAttr(it.key)}" aria-label="${escAttr(it.title)} ausblenden" title="Nicht mein Geschmack — ausblenden">✕</button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function pickSpotlightItem(filtered) {
+  if (!filtered.length) return null;
+  const neuWithTrailer = filtered.find((it) => it._section === 'neu' && it.backdrop_path && it.trailer_key);
+  if (neuWithTrailer) return neuWithTrailer;
+  const anyWithTrailer = filtered.find((it) => it.backdrop_path && it.trailer_key);
+  if (anyWithTrailer) return anyWithTrailer;
+  return filtered[0];
+}
+
+function renderDiscoverView() {
+  if (!$discoverView) return;
+  const all = magazineItems();
+
+  if (all.length === 0) {
+    $discoverView.innerHTML = `
+      ${buildTasteSummaryHtml()}
+      <div class="mag-empty-hub">
+        <div class="empty-icon" aria-hidden="true">✨</div>
+        <h3>Deine Empfehlungen werden vorbereitet</h3>
+        <p>Wir gleichen deine Watchlist, bevorzugten Dienste und aktuellen Streaming-Starts ab. Starte jetzt direkt deinen ersten persönlichen Durchlauf.</p>
+        <button class="btn-mag-refresh${magRefreshing ? ' spinning' : ''}" type="button" data-mag-refresh="1"${magRefreshing ? ' disabled' : ''}>
+          <span class="refresh-icon" aria-hidden="true">↻</span>
+          <span>${magRefreshing ? 'Empfehlungen werden geladen…' : 'Jetzt Empfehlungen erstellen'}</span>
+        </button>
+      </div>`;
+    return;
+  }
+
+  const providerBarHtml = buildProviderFilterBarHtml(all);
+  const filtered = filterMagazineByProvider(all, activeMagProvider);
+  const hero = pickSpotlightItem(filtered);
+  const heroKey = hero ? hero.key : null;
+
+  const railDefs = [
+    { id: 'neu', icon: '🔥', title: 'Blockbuster & Neu im Abo', sub: 'Frisch gestartet bei deinen Diensten' },
+    { id: 'entdeckt', icon: '🎯', title: 'Aus deiner Liste gelernt', sub: 'Direkt aus deinen Favoriten abgeleitet' },
+    { id: 'demnaechst', icon: '🗓️', title: 'Demnächst vormerken', sub: 'Kommende Neustarts zum Vorab-Speichern' },
+  ];
+
+  const railsHtml = railDefs.map((def) => {
+    const secItems = filtered.filter((it) => it._section === def.id && it.key !== heroKey);
+    if (secItems.length === 0) return '';
+    return `
+      <section class="mag-rail-section" data-rail="${def.id}">
+        <div class="mag-rail-head">
+          <h3 class="mag-rail-title">${def.icon} ${esc(def.title)}</h3>
+          <span class="mag-rail-sub">${secItems.length} ${secItems.length === 1 ? 'Tipp' : 'Tipps'}</span>
+        </div>
+        <div class="mag-rail-grid">
+          ${secItems.map(hubCardHtml).join('')}
+        </div>
+      </section>`;
+  }).filter(Boolean).join('');
+
+  $discoverView.innerHTML = `
+    ${buildTasteSummaryHtml()}
+    ${providerBarHtml}
+    ${hero ? spotlightHeroHtml(hero) : ''}
+    ${railsHtml}`;
+}
+
+function refreshDiscoverButtonStates() {
+  if (!$discoverView || activeMainView !== 'discover') return;
+  $discoverView.querySelectorAll('[data-mag-action="add"]').forEach((btn) => {
+    const it = findMagazineItem(btn.dataset.magKey);
+    if (!it) return;
+    const onList = !!findWatchlistItemForMag(it);
+    const svc = primaryServiceForMag(it);
+    btn.classList.toggle('added', onList);
+    btn.textContent = onList ? '✓ Gemerkt' : (it.is_upcoming && !svc ? '+ Vormerken' : '+ Merkliste');
+  });
+  $discoverView.querySelectorAll('[data-mag-action="shortlist"]').forEach((btn) => {
+    const it = findMagazineItem(btn.dataset.magKey);
+    if (!it) return;
+    const wlItem = findWatchlistItemForMag(it);
+    const onShort = !!(wlItem && isOnShortlist(wlItem.id));
+    btn.classList.toggle('active', onShort);
+    btn.innerHTML = `<span aria-hidden="true">${onShort ? '★' : '☆'}</span><span class="shortlist-word">Shortlist</span>`;
+  });
+}
+
+// ---- Magazin-Detail-Sheet (#magazineModal) ----
+function openMagazineItemDetail(key) {
+  const it = findMagazineItem(key);
+  if (!it || !$magazineModal || !$magazineModalBody) return;
+
+  const titleEl = document.getElementById('magazineModalTitle');
+  if (titleEl) titleEl.textContent = it.title || 'Empfehlung';
+
+  const hero = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
+  const matchPct = matchPctForMag(it);
+  const wlItem = findWatchlistItemForMag(it);
+  const onList = !!wlItem;
+  const onShort = !!(wlItem && isOnShortlist(wlItem.id));
+
+  const lang = it.original_language
+    ? (LANG_MAP[it.original_language] || it.original_language.toUpperCase()) : null;
+  const facts = [];
+  if (matchPct) facts.push({ big: `${matchPct}% Match`, small: 'Dein Profil', accent: true });
+  if (it.rating) facts.push({ big: `★ ${it.rating}`, small: 'TMDB-Wertung' });
+  if (it.type === 'tv' && (it.episodes || it.seasons)) {
+    facts.push({ big: it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : `${it.episodes || '?'} Folgen`, small: 'Umfang' });
+  } else if (it.runtime) {
+    facts.push({ big: `${it.runtime} Min.`, small: 'Laufzeit' });
+  }
+  if (it.certification) facts.push({ big: `FSK ${esc(it.certification)}`, small: lang ? esc(lang) : 'Freigabe' });
+  else if (it.director) facts.push({ big: esc(it.director), small: 'Regie / Idee' });
+
+  const provBadges = (Array.isArray(it.providers_app) ? it.providers_app : [])
+    .map((id) => SERVICES.find((s) => s.id === id))
+    .filter(Boolean)
+    .map((s) => `<div class="detail-provider-badge with-logo is-current">${svcInlineLogoHtml(s)}${esc(s.name)}</div>`)
+    .join('');
+
+  const castHtml = (it.cast && it.cast.length) ? `
+    <div class="mag-cast">${it.cast.slice(0, 4).map((m) => {
+      const photo = tmdbProfile(m.profile_path);
+      const inner = photo
+        ? `<img src="${escAttr(photo)}" alt="" loading="lazy">`
+        : `<span class="mag-cast-ini">${esc(initials(m.name))}</span>`;
+      return `<div class="mag-cast-m"><div class="mag-cast-av">${inner}</div><span class="mag-cast-name">${esc(m.name)}</span></div>`;
+    }).join('')}</div>` : '';
+
+  const deTags = [...new Set((it.keywords || []).map(deKeyword).filter(Boolean))];
+  const tagsHtml = deTags.length
+    ? `<div class="mag-tags">${deTags.slice(0, 4).map((k) => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>`
+    : '';
+
+  const recsHtml = (it.recommendations && it.recommendations.length) ? `
+    <div class="mag-recs">
+      <span class="mag-box-label mag-recs-label">Das könnte dir auch gefallen</span>
+      <div class="mag-recs-row">${it.recommendations.slice(0, 2).map((r) => {
+        const poster = tmdbPoster(r.poster_path, 'w185');
+        return `<div class="mag-rec" role="button" tabindex="0" data-rec-id="${r.id}" data-rec-title="${escAttr(r.title)}" aria-label="${escAttr(r.title)} zur Watchlist hinzufügen">${poster ? `<img src="${escAttr(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span class="mag-rec-title">${esc(r.title)}</span><span class="mag-rec-add" aria-hidden="true">+</span></div>`;
+      }).join('')}</div>
+    </div>` : '';
+
+  const fanInline = it.fan_of && (!it.reason || !it.reason.includes(it.fan_of))
+    ? ` <span class="mag-why-fan">Für Fans von ${esc(it.fan_of)}.</span>`
+    : '';
+
+  $magazineModalBody.innerHTML = `
+    <div class="mag-detail-body" data-mag-key="${escAttr(it.key)}">
+      ${hero ? `<div class="mag-detail-hero"><img src="${escAttr(hero)}" alt=""></div>` : ''}
+      ${it.tagline ? `<p class="mag-tagline">„${esc(it.tagline)}"</p>` : ''}
+      ${provBadges ? `<div class="detail-providers" style="margin-bottom:0">${provBadges}</div>` : ''}
+      ${facts.length ? `<div class="mag-facts">${facts.slice(0, 4).map((f) => `<div class="mag-fact${f.accent ? ' mag-fact-accent' : ''}"><span class="mag-fact-big">${f.big}</span><span class="mag-fact-small">${f.small}</span></div>`).join('')}</div>` : ''}
+      ${it.overview ? `<p class="detail-overview" style="margin-bottom:0">${esc(it.overview)}</p>` : ''}
+      ${it.reason ? `<div class="mag-why"><span class="mag-box-label mag-why-label">Warum es zu dir passt</span><span class="mag-box-text">${esc(it.reason)}${fanInline}</span></div>` : ''}
+      ${castHtml}
+      ${tagsHtml}
+      ${recsHtml}
+      <div class="mag-detail-actions">
+        <button class="btn-primary-cta" type="button" data-mag-modal-action="trailer" data-mag-key="${escAttr(it.key)}">
+          <span aria-hidden="true">▶</span> Trailer ansehen
+        </button>
+        <div class="mag-detail-row">
+          <button class="btn-watched" type="button" data-mag-modal-action="add" data-mag-key="${escAttr(it.key)}">
+            ${onList ? '✓ Auf deiner Watchlist' : (it.is_upcoming && !provBadges ? '+ Vormerken' : '+ Auf die Watchlist')}
+          </button>
+          <button class="btn-shortlist${onShort ? ' on-shortlist' : ''}" type="button" data-mag-modal-action="shortlist" data-mag-key="${escAttr(it.key)}">
+            ${onShort ? '★ Shortlist' : '☆ Shortlist'}
+          </button>
+          <button class="btn-remove" type="button" data-mag-modal-action="dismiss" data-mag-key="${escAttr(it.key)}">✕ Ausblenden</button>
+        </div>
+      </div>
+    </div>`;
+
+  $magazineModal.classList.add('open');
+  openOverlay($magazineModal, () => {
+    const c = document.getElementById('magazineModalClose');
+    if (c) c.focus();
   });
 }
 
 function openMagazineModal() {
-  if (magazineItems().length === 0) return;
-  renderMagazineModalBody();
-  $magazineModal.classList.add('open');
-  openOverlay($magazineModal, () => { const b = document.getElementById('magReadBtn'); if (b) b.focus(); });
+  switchMainView('discover');
 }
 
 function closeMagazineModal(opts) {
@@ -2394,195 +2858,297 @@ function closeFilterSheet() {
 
 function maybeAutoOpenMagazine() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('magazin') !== '1') return;
+  const autoMag = params.get('magazin') === '1' || params.get('view') === 'discover';
+  if (!autoMag) return;
   params.delete('magazin');
+  params.delete('view');
   const newUrl = params.toString()
     ? `${window.location.pathname}?${params.toString()}`
     : window.location.pathname;
   window.history.replaceState({}, '', newUrl);
-  if (magazineItems().length > 0) openMagazineReader();
+  if (SYNC_ENABLED) switchMainView('discover');
 }
 
-// Magazin v2 — Variante B (Fokus-Kino): grosses Poster-Hero mit Titel-Overlay,
-// Trailer-Play, Tagline-Zitat, Fakten-Panel, Besetzung mit Fotos, Mood-Tags,
-// Empfehlungen. Jedes neue Feld null-guarded (fehlt -> Block entfaellt).
-function magazineCardHtml(it, i) {
-  // Backdrop first: backdrops have no baked-in title text, so the title
-  // overlay stays clean (posters often print the title onto the artwork).
-  const hero = tmdbBackdrop(it.backdrop_path) || tmdbPoster(it.poster_path, 'w500');
-  const genre = (it.genres && it.genres[0]) || (it.type === 'tv' ? 'Serie' : 'Film');
+// ---- Inline YouTube Trailer Player (#trailerModal) ----
+function pickBestYoutubeKey(videos) {
+  const list = (Array.isArray(videos) ? videos : []).filter(
+    (v) => v && v.site === 'YouTube' && v.key && (v.type === 'Trailer' || v.type === 'Teaser' || v.type === 'Clip'),
+  );
+  const tRank = (t) => (t === 'Trailer' ? 0 : (t === 'Teaser' ? 1 : 2));
+  const lRank = (l) => (l === 'de' ? 0 : (l === 'en' ? 1 : 2));
+  list.sort((a, b) => {
+    if (tRank(a.type) !== tRank(b.type)) return tRank(a.type) - tRank(b.type);
+    if (!!b.official !== !!a.official) return (b.official ? 1 : 0) - (a.official ? 1 : 0);
+    return lRank(a.iso_639_1) - lRank(b.iso_639_1);
+  });
+  return list.length > 0 ? list[0].key : null;
+}
 
-  const heroTags = [esc(genre.toUpperCase())];
-  if (it.certification) heroTags.push(`FSK ${esc(it.certification)}`);
-
-  const typeLabel = it.type === 'tv'
-    ? (it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : 'Serie')
-    : 'Film';
-  const heroSub = [typeLabel, (it.providers || [])[0]].filter(Boolean).join(' · ');
-
-  const trailerBtn = it.trailer_key ? `
-      <a class="mag-hero-play" href="https://www.youtube.com/watch?v=${encodeURIComponent(it.trailer_key)}" target="_blank" rel="noopener noreferrer" aria-label="Trailer auf YouTube ansehen">
-        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
-      </a>` : '';
-
-  const badgeDate = it.upcoming_date || it.release_date;
-  const upBadge = it.is_upcoming && badgeDate
-    ? `<span class="mag-card-up">ab ${formatShortDate(badgeDate)}</span>` : '';
-
-  const tagline = it.tagline ? `<p class="mag-tagline">„${esc(it.tagline)}"</p>` : '';
-
-  const lang = it.original_language
-    ? (LANG_MAP[it.original_language] || it.original_language.toUpperCase()) : null;
-  const facts = [];
-  if (it.rating) facts.push({ big: `★ ${it.rating}`, small: 'TMDB-Wertung', accent: true });
-  if (it.type === 'tv' && (it.episodes || it.seasons)) {
-    facts.push({ big: it.seasons && it.seasons > 1 ? `${it.seasons} Staffeln` : `${it.episodes || '?'} Folgen`, small: 'Umfang' });
-  } else if (it.runtime) {
-    facts.push({ big: `${it.runtime} Min.`, small: 'Laufzeit' });
+async function resolveTrailerKey(type, tmdbId, knownKey) {
+  if (knownKey) return knownKey;
+  const cacheId = `${type}:${tmdbId}`;
+  if (trailerCache.has(cacheId)) return trailerCache.get(cacheId) || null;
+  if (!SYNC_ENABLED || !tmdbId) return null;
+  try {
+    const res = await fetchT(
+      `${WORKER_BASE}/tmdb/details?type=${encodeURIComponent(type)}&id=${encodeURIComponent(tmdbId)}&videos=1`,
+      { headers: { 'X-API-Key': SYNC_KEY } },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const key = pickBestYoutubeKey(data && data.videos && data.videos.results);
+    trailerCache.set(cacheId, key || '');
+    return key;
+  } catch (_) {
+    return null;
   }
-  if (it.certification) facts.push({ big: `FSK ${esc(it.certification)}`, small: lang ? esc(lang) : 'Altersfreigabe' });
-  else if (lang) facts.push({ big: esc(lang), small: 'Sprache' });
-  else if (it.year) facts.push({ big: esc(String(it.year)), small: 'Jahr' });
-  if (it.director) facts.push({ big: esc(it.director), small: 'Regie' });
-  else if (it.country) facts.push({ big: esc(it.country), small: 'Land' });
-  const factsHtml = facts.length ? `
-      <div class="mag-facts">${facts.slice(0, 4).map(f =>
-        `<div class="mag-fact${f.accent ? ' mag-fact-accent' : ''}"><span class="mag-fact-big">${f.big}</span><span class="mag-fact-small">${f.small}</span></div>`).join('')}</div>` : '';
-
-  const castHtml = (it.cast && it.cast.length) ? `
-      <div class="mag-cast">${it.cast.slice(0, 4).map(m => {
-        const photo = tmdbProfile(m.profile_path);
-        const inner = photo
-          ? `<img src="${escAttr(photo)}" alt="" loading="lazy">`
-          : `<span class="mag-cast-ini">${esc(initials(m.name))}</span>`;
-        return `<div class="mag-cast-m"><div class="mag-cast-av">${inner}</div><span class="mag-cast-name">${esc(m.name)}</span></div>`;
-      }).join('')}</div>` : '';
-
-  const overview = it.overview ? `<p class="mag-card-overview">${esc(it.overview)}</p>` : '';
-
-  const fanOfInline = it.fan_of ? ` <span class="mag-why-fan">Für Fans von ${esc(it.fan_of)}.</span>` : '';
-  // WL-20: „Warum für dich" war ein Calque aus dem Englischen → idiomatisches Deutsch.
-  const reason = it.reason ? `
-      <div class="mag-why"><span class="mag-box-label mag-why-label">Warum es zu dir passt</span><span class="mag-box-text">${esc(it.reason)}${fanOfInline}</span></div>` : '';
-
-  // WL-13: nur kuratierte deutsche Keywords zeigen (englische TMDB-Rohwerte
-  // ausblenden), dedupliziert (mehrere EN-Keys können auf dasselbe DE mappen).
-  const deTags = [...new Set((it.keywords || []).map(deKeyword).filter(Boolean))];
-  const tags = deTags.length ? `
-      <div class="mag-tags">${deTags.slice(0, 4).map(k => `<span class="mag-tag">${esc(k)}</span>`).join('')}</div>` : '';
-
-  // WL-20: Label idiomatisch (statt Calque „Wenn dir gefällt") + Empfehlungen
-  // klickbar → Titel auf die Watchlist. Rec-Daten tragen nur id/title/poster
-  // (kein media_type) → delegiertes Handling über data-rec-* (Reader rendert
-  // per innerHTML); der Klick löst media_type per Titel-Suche auf.
-  const recs = (it.recommendations && it.recommendations.length) ? `
-      <div class="mag-recs">
-        <span class="mag-box-label mag-recs-label">Das könnte dir auch gefallen</span>
-        <div class="mag-recs-row">${it.recommendations.slice(0, 2).map(r => {
-          const poster = tmdbPoster(r.poster_path, 'w185');
-          return `<div class="mag-rec" role="button" tabindex="0" data-rec-id="${r.id}" data-rec-title="${escAttr(r.title)}" aria-label="${escAttr(r.title)} zur Watchlist hinzufügen">${poster ? `<img src="${escAttr(poster)}" alt="" loading="lazy">` : '<div class="mag-rec-ph"></div>'}<span class="mag-rec-title">${esc(r.title)}</span><span class="mag-rec-add" aria-hidden="true">+</span></div>`;
-        }).join('')}</div>
-      </div>` : '';
-
-  return `
-  <article class="mag-card mag-card-v2">
-    <div class="mag-hero">
-      ${hero ? `<img src="${escAttr(hero)}" alt="" loading="${i < 2 ? 'eager' : 'lazy'}">` : ''}
-      <span class="mag-hero-tags">${heroTags.join(' · ')}</span>
-      ${upBadge}
-      ${trailerBtn}
-      <div class="mag-hero-scrim">
-        <h3 class="mag-hero-title">${esc(it.title)}</h3>
-        ${heroSub ? `<span class="mag-hero-sub">${esc(heroSub)}</span>` : ''}
-      </div>
-    </div>
-    <div class="mag-card-body">
-      ${tagline}
-      ${factsHtml}
-      ${castHtml}
-      ${overview}
-      ${reason}
-      ${tags}
-      ${recs}
-    </div>
-  </article>`;
 }
 
-function updateMagazineProgress(idx, total) {
-  const el = document.getElementById('magazineProgress');
-  if (el) el.textContent = `${idx + 1} / ${total}`;
+function youtubeSearchUrl(title, year) {
+  const q = `${title || ''} ${year || ''} Trailer Deutsch`.trim();
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
 }
 
-function openMagazineReader() {
-  const $reader = document.getElementById('magazineReader');
-  const $track = document.getElementById('magazineTrack');
-  const all = magazineItems();
-  if (!$reader || !$track || all.length === 0) return;
-  if (!$reader.classList.contains('hidden')) return;
+async function openTrailerModal({ title, year, type, tmdbId, trailerKey, searchQuery, magItem }) {
+  if (!$trailerModal) return;
+  const $title = document.getElementById('trailerModalTitle');
+  const $stage = document.getElementById('trailerStage');
+  const $footer = document.getElementById('trailerFooter');
+  if (!$stage || !$footer) return;
 
-  const issueEl = document.getElementById('magazineIssue');
-  if (issueEl) issueEl.textContent = `Streaming-Woche Nr. ${magazine.issue ? magazine.issue.week : ''}`;
+  if ($title) $title.textContent = `${title || 'Trailer'} — Trailer`;
+  $stage.innerHTML = '<div class="trailer-fallback"><div class="loading-spinner"></div><span>Trailer wird geladen…</span></div>';
+  $footer.innerHTML = '';
 
-  $track.innerHTML = all.map((it, i) => magazineCardHtml(it, i)).join('');
-  $reader.classList.remove('hidden');
-  document.body.classList.add('mag-open');
-  openOverlay($reader, () => { const c = document.getElementById('magazineClose'); if(c) c.focus(); });
-  $track.scrollTop = 0;
-  updateMagazineProgress(0, all.length);
+  const hadUnderlyingModal = ($detailModal && $detailModal.classList.contains('open'))
+    || ($magazineModal && $magazineModal.classList.contains('open'));
+  trailerPrevFocus = hadUnderlyingModal ? lastFocused : null;
 
-  magCurrentIdx = 0;
-  updateFab(0);
+  $trailerModal.classList.add('open');
+  openOverlay($trailerModal, () => {
+    const c = document.getElementById('trailerModalClose');
+    if (c) c.focus();
+  });
 
-  // Most-visible card wins — robust even when a card is taller than the track
-  // viewport (the old scrollTop/clientHeight assumption broke for v2 cards).
-  // Drives both the progress label and the floating add-button state.
-  if (magObserver) magObserver.disconnect();
-  const cards = Array.from($track.querySelectorAll('.mag-card'));
-  const ratios = new Array(cards.length).fill(0);
-  magObserver = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      const i = cards.indexOf(e.target);
-      if (i >= 0) ratios[i] = e.intersectionRatio;
-    }
-    let best = 0;
-    let bestR = -1;
-    for (let i = 0; i < ratios.length; i++) {
-      if (ratios[i] > bestR) { bestR = ratios[i]; best = i; }
-    }
-    if (best !== magCurrentIdx) {
-      magCurrentIdx = best;
-      updateMagazineProgress(best, all.length);
-      updateFab(best);
-    }
-  }, { root: $track, threshold: [0, 0.25, 0.5, 0.75, 1] });
-  cards.forEach((card) => magObserver.observe(card));
+  const resolvedKey = await resolveTrailerKey(type, tmdbId, trailerKey);
+  if (!$trailerModal.classList.contains('open')) return;
+
+  const ytSearch = searchQuery
+    ? `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`
+    : youtubeSearchUrl(title, year);
+  const ytDirect = resolvedKey
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(resolvedKey)}`
+    : ytSearch;
+
+  if (resolvedKey) {
+    if (magItem && !magItem.trailer_key) magItem.trailer_key = resolvedKey;
+    const embedSrc = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(resolvedKey)}?autoplay=1&playsinline=1&rel=0`;
+    $stage.innerHTML = `<iframe src="${escAttr(embedSrc)}" title="Trailer zu ${escAttr(title || '')}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  } else {
+    $stage.innerHTML = `
+      <div class="trailer-fallback">
+        <p>Für „${esc(title || '')}" liegt bei TMDB noch kein direkter Video-Code vor.</p>
+        <a class="btn-primary-cta" style="padding:0 22px" href="${escAttr(ytSearch)}" target="_blank" rel="noopener">
+          <span aria-hidden="true">▶</span> Trailer direkt auf YouTube öffnen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+        </a>
+      </div>`;
+  }
+
+  const onList = items.some((x) => x.tmdbId === tmdbId && x.type === type);
+  const addBtnHtml = magItem
+    ? `<button class="btn-spot-add${onList ? ' added' : ''}" id="trailerAddBtn" type="button" style="flex:0 0 auto">${onList ? '✓ Auf deiner Merkliste' : '+ Auf meine Merkliste'}</button>`
+    : '<span></span>';
+
+  $footer.innerHTML = `
+    ${addBtnHtml}
+    <a class="btn-yt-ext" href="${escAttr(ytDirect)}" target="_blank" rel="noopener">
+      <span>Auf YouTube öffnen</span><span aria-hidden="true">↗</span>
+    </a>`;
+
+  const $addBtn = document.getElementById('trailerAddBtn');
+  if ($addBtn && magItem) {
+    $addBtn.addEventListener('click', async () => {
+      if (findWatchlistItemForMag(magItem)) return;
+      $addBtn.disabled = true;
+      $addBtn.textContent = 'Wird gespeichert…';
+      await addFromMagazine(magItem);
+      $addBtn.disabled = false;
+      $addBtn.classList.add('added');
+      $addBtn.textContent = '✓ Auf deiner Merkliste';
+    });
+  }
 }
 
-function closeMagazineReader() {
-  const $reader = document.getElementById('magazineReader');
-  if (!$reader || $reader.classList.contains('hidden')) return;
-  $reader.classList.add('hidden');
-  document.body.classList.remove('mag-open');
-  closeOverlay($reader);
-  if (magObserver) { magObserver.disconnect(); magObserver = null; }
+function closeTrailerModal() {
+  if (!$trailerModal || !$trailerModal.classList.contains('open')) return;
+  const $stage = document.getElementById('trailerStage');
+  if ($stage) $stage.innerHTML = ''; // Stoppt YouTube-Audio sofort
+  $trailerModal.classList.remove('open');
+  closeOverlay($trailerModal);
+  if (($detailModal && $detailModal.classList.contains('open'))
+      || ($magazineModal && $magazineModal.classList.contains('open'))) {
+    setBackgroundInert(true);
+    if (trailerPrevFocus) lastFocused = trailerPrevFocus;
+  }
+  trailerPrevFocus = null;
 }
 
-// Floating add-button: state derived FRESH from `items` (the live watchlist) on
-// every card change — never cached in the DOM. Scrolling away from an added
-// card and back shows "✓ Auf deiner Liste" correctly.
-function updateFab(idx) {
-  const btn = document.getElementById('magazineAddBtn');
-  if (!btn) return;
-  const all = magazineItems();
-  const it = all[idx];
+function openTrailerModalForMagKey(key) {
+  const it = findMagazineItem(key);
   if (!it) return;
-  const onList = items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type);
-  btn.classList.toggle('added', onList);
-  btn.disabled = onList;
-  btn.textContent = onList
-    ? '✓ Auf deiner Liste'
-    : (it.is_upcoming ? '+ Vormerken' : '+ Auf die Watchlist');
+  openTrailerModal({
+    title: it.title,
+    year: it.year,
+    type: it.type,
+    tmdbId: it.tmdb_id,
+    trailerKey: it.trailer_key || null,
+    searchQuery: it.trailer_search_query || null,
+    magItem: it,
+  });
 }
+
+function openTrailerForWatchlistItem(item) {
+  if (!item) return;
+  openTrailerModal({
+    title: item.title,
+    year: item.year,
+    type: item.type,
+    tmdbId: item.tmdbId,
+    trailerKey: null,
+    searchQuery: `${item.title || ''} ${item.year || ''} Trailer Deutsch`.trim(),
+    magItem: null,
+  });
+}
+
+// ---- Magazin-Interaktionen: Merkliste, Shortlist, Ausblenden + Undo, Neu mischen ----
+async function handleMagAddClick(key, btn) {
+  const it = findMagazineItem(key);
+  if (!it) return;
+  const existing = findWatchlistItemForMag(it);
+  if (existing) {
+    if ($magazineModal && $magazineModal.classList.contains('open')) closeMagazineModal({ restoreFocus: false });
+    openDetail(existing);
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Speichert…';
+  }
+  await addFromMagazine(it);
+  if (btn) btn.disabled = false;
+  refreshDiscoverButtonStates();
+}
+
+async function handleMagShortlistClick(key, btn) {
+  const it = findMagazineItem(key);
+  if (!it) return;
+  let wlItem = findWatchlistItemForMag(it);
+  if (!wlItem) {
+    if (btn) btn.disabled = true;
+    await addFromMagazine(it, { silent: true });
+    if (btn) btn.disabled = false;
+    wlItem = findWatchlistItemForMag(it);
+  }
+  if (!wlItem) return;
+
+  if (isOnShortlist(wlItem.id)) {
+    removeFromShortlist(wlItem.id);
+    showAutoAddToast(`„${it.title}" von Shortlist gelöst`, 'info');
+  } else if (isShortlistFull()) {
+    showAutoAddToast(`✓ Auf Merkliste (Shortlist voll — max. ${SHORTLIST_MAX})`, 'info');
+  } else {
+    addToShortlist(wlItem.id);
+    showAutoAddToast(`★ „${it.title}" auf Merkliste & Shortlist`, 'success');
+  }
+  refreshDiscoverButtonStates();
+}
+
+async function sendMagazineFeedback(key, action, title) {
+  if (!SYNC_ENABLED) return;
+  try {
+    await fetchT(MAGAZINE_FEEDBACK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': SYNC_KEY },
+      body: JSON.stringify({ key, action, title: title || '' }),
+    });
+  } catch (err) {
+    console.warn('Magazine feedback failed:', err);
+  }
+}
+
+function dismissMagazineItemByKey(key) {
+  if (!magazine || !Array.isArray(magazine.sections)) return;
+  let removedItem = null;
+  let removedSectionId = null;
+  let removedIndex = -1;
+
+  for (const sec of magazine.sections) {
+    if (!Array.isArray(sec.items)) continue;
+    const idx = sec.items.findIndex((it) => (it.key || `${it.type}_${it.tmdb_id}`) === key);
+    if (idx !== -1) {
+      removedItem = sec.items[idx];
+      removedSectionId = sec.id;
+      removedIndex = idx;
+      sec.items.splice(idx, 1);
+      if (magazine.counts) magazine.counts[sec.id] = sec.items.length;
+      break;
+    }
+  }
+  if (!removedItem) return;
+
+  if ($magazineModal && $magazineModal.classList.contains('open')) {
+    closeMagazineModal();
+  }
+  updateViewCounts();
+  renderDiscoverView();
+  sendMagazineFeedback(key, 'dismiss', removedItem.title);
+
+  showUndoBar(`„${removedItem.title}" ausgeblendet`, () => {
+    const sec = magazine && Array.isArray(magazine.sections)
+      ? magazine.sections.find((s) => s.id === removedSectionId)
+      : null;
+    if (sec && Array.isArray(sec.items)) {
+      sec.items.splice(Math.min(removedIndex, sec.items.length), 0, removedItem);
+      if (magazine.counts) magazine.counts[sec.id] = sec.items.length;
+      updateViewCounts();
+      renderDiscoverView();
+    }
+    sendMagazineFeedback(key, 'undo', removedItem.title);
+  });
+}
+
+async function refreshMagazineNow() {
+  if (!SYNC_ENABLED || magRefreshing) return;
+  magRefreshing = true;
+  renderDiscoverView();
+  try {
+    const res = await fetchT(`${MAGAZINE_REFRESH_URL}?force=1`, {
+      method: 'POST',
+      headers: { 'X-API-Key': SYNC_KEY },
+    }, 22000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && data.magazine) {
+      magazine = data.magazine;
+      activeMagProvider = 'all';
+      showAutoAddToast('✓ Frische Empfehlungen für dich gemischt', 'success');
+    } else {
+      showAutoAddToast('Auswahl ist bereits auf dem neuesten Stand', 'info');
+    }
+  } catch (err) {
+    console.error('Magazine refresh error:', err);
+    showAutoAddToast('Neu mischen gerade nicht erreichbar', 'error');
+  } finally {
+    magRefreshing = false;
+    updateViewCounts();
+    renderDiscoverView();
+  }
+}
+
+// Legacy-Stubs fuer eventuelle Alt-Aufrufe
+function openMagazineReader() { switchMainView('discover'); }
+function closeMagazineReader() {}
+function updateFab() {}
 
 // ---- Vorgemerkt (service-less / upcoming watchlist items) ----
 
@@ -2756,7 +3322,7 @@ async function resolveVorgemerkt() {
 
 // Returns true if the title is on the watchlist afterwards. Decoupled from any
 // DOM button so the single floating button can drive it (P1-2).
-async function addFromMagazine(it) {
+async function addFromMagazine(it, opts = {}) {
   if (items.some(x => x.tmdbId === it.tmdb_id && x.type === it.type)) return true;
 
   // WL-28: bester Anbieter per Pruefung (Profil + Rang); faellt sie aus, die
@@ -2788,7 +3354,7 @@ async function addFromMagazine(it) {
     saveItems();
     renderFilterBar();
     renderWatchlist();
-    showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
+    if (!opts.silent) showAutoAddToast(`✓ „${it.title}" hinzugefügt`, 'success');
     return true;
   }
   // No provider yet (upcoming title) — bookmark as "vorgemerkt" directly from
@@ -2805,7 +3371,7 @@ async function addFromMagazine(it) {
     releaseDate: it.upcoming_date || it.release_date || null,
     providers: magProviders,
   });
-  if (added) showAutoAddToast(`✓ „${it.title}" vorgemerkt`, 'success');
+  if (added && !opts.silent) showAutoAddToast(`✓ „${it.title}" vorgemerkt`, 'success');
   return true;
 }
 
@@ -2869,38 +3435,66 @@ async function addRecommendationFromMagazine(rec) {
   }
 }
 
-const $magClose = document.getElementById('magazineClose');
-if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
-// WL-23: der fruehere Modul-Level-Escape-Listener ist gestrichen — Escape
-// laeuft zentral ueber die Kette in bindEvents (oberstes Overlay zuerst).
-
-const $magAddBtn = document.getElementById('magazineAddBtn');
-if ($magAddBtn) {
-  $magAddBtn.addEventListener('click', async () => {
-    if ($magAddBtn.disabled) return;
-    const it = magazineItems()[magCurrentIdx];
-    if (!it) return;
-    $magAddBtn.disabled = true;
-    $magAddBtn.textContent = 'Wird hinzugefügt…';
-    await addFromMagazine(it);
-    updateFab(magCurrentIdx);
+// Delegierte Handler fuer den Für-Dich Streaming-Hub (#discoverView) & das Magazin-Detail-Sheet (#magazineModalBody)
+if ($discoverView) {
+  $discoverView.addEventListener('click', (e) => {
+    const refreshBtn = e.target.closest('[data-mag-refresh]');
+    if (refreshBtn) {
+      refreshMagazineNow();
+      return;
+    }
+    const provChip = e.target.closest('[data-mag-prov]');
+    if (provChip) {
+      activeMagProvider = provChip.dataset.magProv || 'all';
+      renderDiscoverView();
+      return;
+    }
+    const actEl = e.target.closest('[data-mag-action]');
+    if (!actEl) return;
+    const action = actEl.dataset.magAction;
+    const key = actEl.dataset.magKey;
+    if (!key) return;
+    if (action === 'trailer') { e.stopPropagation(); openTrailerModalForMagKey(key); }
+    else if (action === 'add') { e.stopPropagation(); handleMagAddClick(key, actEl); }
+    else if (action === 'shortlist') { e.stopPropagation(); handleMagShortlistClick(key, actEl); }
+    else if (action === 'dismiss') { e.stopPropagation(); dismissMagazineItemByKey(key); }
+    else if (action === 'detail') openMagazineItemDetail(key);
   });
 }
 
-// WL-20: delegierter Klick/Tastatur-Handler für die klickbaren Empfehlungen
-// (der Reader rendert Karten per innerHTML → Delegation statt Per-Element).
-const $magTrack = document.getElementById('magazineTrack');
-if ($magTrack) {
-  const handleRec = (el) => {
+if ($magazineModalBody) {
+  const handleModalRec = (el) => {
     if (el) addRecommendationFromMagazine({ id: parseInt(el.dataset.recId, 10), title: el.dataset.recTitle });
   };
-  $magTrack.addEventListener('click', (e) => handleRec(e.target.closest('.mag-rec')));
-  $magTrack.addEventListener('keydown', (e) => {
+  $magazineModalBody.addEventListener('click', async (e) => {
+    const recEl = e.target.closest('.mag-rec');
+    if (recEl) { handleModalRec(recEl); return; }
+    const actBtn = e.target.closest('[data-mag-modal-action]');
+    if (!actBtn) return;
+    const action = actBtn.dataset.magModalAction;
+    const key = actBtn.dataset.magKey;
+    if (!key) return;
+    if (action === 'trailer') {
+      openTrailerModalForMagKey(key);
+    } else if (action === 'add') {
+      await handleMagAddClick(key, actBtn);
+      if ($magazineModal.classList.contains('open')) openMagazineItemDetail(key);
+    } else if (action === 'shortlist') {
+      await handleMagShortlistClick(key, actBtn);
+      if ($magazineModal.classList.contains('open')) openMagazineItemDetail(key);
+    } else if (action === 'dismiss') {
+      dismissMagazineItemByKey(key);
+    }
+  });
+  $magazineModalBody.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = e.target.closest('.mag-rec');
-    if (el) { e.preventDefault(); handleRec(el); }
+    if (el) { e.preventDefault(); handleModalRec(el); }
   });
 }
+
+const $magClose = document.getElementById('magazineClose');
+if ($magClose) $magClose.addEventListener('click', closeMagazineReader);
 
 // ---- Service Worker & Offline / Install UI ----
 function registerServiceWorker() {
