@@ -7,7 +7,8 @@
 // v5 (Magazin v3): Fuer-Dich Streaming-Hub, Inline-Trailer & Familien-Profile
 // v6 (V3 Live-TV Command-Rail): Live-TV Spotlight-Band & Sheet
 // v7 (V1 Live-TV & 20:15 Tabs): 4-Tab-Navigation, strikte Empfangsweg-Filterung
-const CACHE_VERSION = 'v7';
+// v8 (Paket B + Sky Go Anchor): 10 Echt-Live-Sender, nativer skygo://-Link in Live/20:15 & Magazin
+const CACHE_VERSION = 'v8';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 

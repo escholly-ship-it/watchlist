@@ -3112,6 +3112,10 @@ body.is-offline {
 }
 
 .live-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   min-height: 36px;
@@ -3123,6 +3127,8 @@ body.is-offline {
   font-family: inherit;
   font-size: 0.76rem;
   font-weight: 700;
+  text-decoration: none;
+  box-sizing: border-box;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -3166,6 +3172,8 @@ body.is-offline {
   font-family: inherit;
   font-size: 0.78rem;
   font-weight: 700;
+  text-decoration: none;
+  box-sizing: border-box;
   cursor: pointer;
   display: inline-flex;
   align-items: center;

@@ -172,7 +172,7 @@ function loadAppContext({ platform = 'MacIntel', maxTouchPoints = 0 } = {}) {
   return context;
 }
 
-test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v7-Cache)', () => {
+test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v8-Cache)', () => {
   assert.match(HTML_SRC, /id="tabList"/);
   assert.match(HTML_SRC, /id="tabDiscover"/);
   assert.match(HTML_SRC, /id="tabLiveNow"/);
@@ -183,11 +183,11 @@ test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveVie
   assert.match(CSS_SRC, /\.live-view/);
   assert.match(CSS_SRC, /#app\.view-live #watchlist/);
   assert.match(CSS_SRC, /#app\.view-primetime #watchlist/);
-  assert.match(SW_SRC, /CACHE_VERSION = 'v7'/);
+  assert.match(SW_SRC, /CACHE_VERSION = 'v8'/);
 });
 
-test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt und filtern unempfangbare Sender heraus', () => {
-  const ctx = loadAppContext();
+test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt nach Paket B (10 Sender) und rendern echte skygo://-Anchors', () => {
+  const ctx = loadAppContext({ platform: 'MacIntel', maxTouchPoints: 0 });
   const sampleLive = {
     ok: true,
     now: [
@@ -196,24 +196,19 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt un
         channel: 'WDR',
         shortChannel: 'WDR HD',
         track: 'sat',
-        trackLabel: 'SAT HD',
-        badge: 'SAT',
         title: 'Watzmann ermittelt',
         startTime: '14:30',
         endTime: '15:20',
         isLive: true,
-        progressPct: 45,
-        webUrl: 'https://www.ardmediathek.de/live',
-        mediathekServiceId: 'ard',
       },
       {
-        id: 'sat_ndr_1500',
-        channel: 'NDR',
-        shortChannel: 'NDR HD',
+        id: 'sat_ard_1430',
+        channel: 'Das Erste',
+        shortChannel: 'DAS ERSTE',
         track: 'sat',
         trackLabel: 'SAT HD',
         badge: 'SAT',
-        title: 'Watzmann ermittelt',
+        title: 'Wer weiß denn sowas?',
         startTime: '14:30',
         endTime: '15:20',
         isLive: true,
@@ -222,20 +217,29 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt un
         mediathekServiceId: 'ard',
       },
       {
-        id: 'sky_atl_now',
-        channel: 'Sky Atlantic',
-        shortChannel: 'SKY ATLANTIC',
+        id: 'sky_cin_now',
+        channel: 'Sky Cinema Premiere',
+        shortChannel: 'SKY CINEMA',
         track: 'sky',
-        trackLabel: 'SKY · HDMI 3',
-        badge: 'SKY',
-        title: 'The Last of Us',
+        title: 'Twisters',
         startTime: '14:15',
-        endTime: '15:15',
+        endTime: '15:55',
         isLive: true,
-        progressPct: 60,
-        tmdbId: 100088,
-        mediaType: 'tv',
-        rating: 8.6,
+      },
+      {
+        id: 'sky_ssn_now',
+        channel: 'Sky Sport News',
+        shortChannel: 'SKY SPORT NEWS',
+        track: 'sky',
+        trackLabel: 'SKY · 200',
+        badge: 'SKY',
+        title: 'Sky Sport News Live',
+        startTime: '14:00',
+        endTime: '15:30',
+        isLive: true,
+        progressPct: 50,
+        webUrl: 'https://www.sky.de/tvguide',
+        mediathekServiceId: 'sky',
       },
     ],
     primetime: [
@@ -258,25 +262,66 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt un
         isLive: false,
       },
       {
-        id: 'sat_zdf_2015',
-        channel: 'ZDF',
-        shortChannel: 'ZDF HD',
+        id: 'sat_3sat_2015',
+        channel: '3sat',
+        shortChannel: '3SAT HD',
         track: 'sat',
-        title: 'Heute Journal Spezial',
+        title: 'Kulturzeit Extra',
         startTime: '20:15',
         isLive: false,
       },
       {
-        id: 'sky_dune_2015',
-        channel: 'Sky Cinema Premiere',
-        shortChannel: 'SKY CINEMA',
-        track: 'sky',
-        title: 'Dune: Part Two',
+        id: 'mag_vox_2015',
+        channel: 'VOX',
+        shortChannel: 'VOX HD',
+        track: 'magenta',
+        title: 'Goodbye Deutschland',
         startTime: '20:15',
         isLive: false,
-        tmdbId: 693134,
-        mediaType: 'movie',
-        rating: 8.2,
+      },
+      {
+        id: 'sat_ard_2015',
+        channel: 'Das Erste',
+        shortChannel: 'DAS ERSTE',
+        track: 'sat',
+        trackLabel: 'SAT HD',
+        badge: 'SAT',
+        title: 'Die Kanzlei',
+        startTime: '20:15',
+        endTime: '21:00',
+        isLive: false,
+        tmdbId: 65432,
+        mediaType: 'tv',
+        rating: 7.4,
+        webUrl: 'https://www.ardmediathek.de/live',
+        mediathekServiceId: 'ard',
+      },
+      {
+        id: 'mag_rtl_2015',
+        channel: 'RTL',
+        shortChannel: 'RTL HD',
+        track: 'magenta',
+        trackLabel: 'MAGENTA HD',
+        badge: 'MAGENTA',
+        title: 'Wer wird Millionär?',
+        startTime: '20:15',
+        endTime: '22:15',
+        isLive: false,
+        webUrl: 'https://web.magentatv.de/tv-guide',
+      },
+      {
+        id: 'sky_f1_2000',
+        channel: 'Sky Sport F1',
+        shortChannel: 'SKY SPORT F1',
+        track: 'sky',
+        trackLabel: 'SKY · 207',
+        badge: 'SKY',
+        title: 'Formel 1: Großer Preis der USA',
+        startTime: '20:00',
+        endTime: '22:00',
+        isLive: false,
+        webUrl: 'https://www.sky.de/tvguide',
+        mediathekServiceId: 'sky',
       },
     ],
     sport: [
@@ -307,29 +352,31 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt un
 
   const berlin1440 = new Date('2026-11-17T13:40:00Z'); // 14:40 Europe/Berlin
   vm.runInContext(`
-    items = [{ id: 'wl1', tmdbId: 693134, type: 'movie', title: 'Dune: Part Two', watched: false }];
+    items = [{ id: 'wl1', tmdbId: 65432, type: 'tv', title: 'Die Kanzlei', watched: false }];
     liveTvData = ${JSON.stringify(sampleLive)};
   `, ctx);
 
   const nowItems = ctx.buildLiveNowItems(sampleLive, berlin1440);
   const primeItems = ctx.buildPrimetimeItems(sampleLive, berlin1440);
 
-  // Simulcast WDR+NDR wird auf 1 Eintrag dedupliziert; laufender Sport von heute landet in Live
-  assert.equal(nowItems.filter((x) => x.title === 'Watzmann ermittelt').length, 1);
+  // Paket B: WDR und Sky Cinema Premiere sind raus; ARD, Sky Sport News und heutige Bundesliga sind drin
+  assert.equal(nowItems.some((x) => x.channel === 'WDR' || /sky cinema/i.test(x.channel)), false);
+  assert.equal(nowItems.some((x) => x.channel === 'Das Erste' && x.title === 'Wer weiß denn sowas?'), true);
+  assert.equal(nowItems.some((x) => x.channel === 'Sky Sport News'), true);
   assert.equal(nowItems.some((x) => x.title === '2. Bundesliga live'), true);
-  assert.equal(nowItems.some((x) => x.title === 'Dune: Part Two'), false);
 
-  // Kinowelt TV (17:00), ZDF (22:20) und Sport von einem anderen Datum (20.11.) sind raus; Dune (Watchlist) zuerst
-  assert.equal(primeItems.some((x) => /kinowelt/i.test(x.channel) || x.title === 'Malcom X'), false);
-  assert.equal(primeItems.some((x) => x.title === 'Spätfilm'), false);
-  assert.equal(primeItems.some((x) => x.title.includes('Bayern')), false);
-  assert.equal(primeItems[0].title, 'Dune: Part Two');
+  // 20:15: 3sat, VOX, Kinowelt, ZDF 22:20 und Sport von anderem Datum (20.11.) sind raus; Watchlist-Treffer (Die Kanzlei) zuerst
+  assert.equal(primeItems.some((x) => /3sat|vox|kinowelt/i.test(x.channel)), false);
+  assert.equal(primeItems.some((x) => x.title === 'Spätfilm' || x.title.includes('Bayern')), false);
+  assert.equal(primeItems[0].title, 'Die Kanzlei');
+  assert.equal(primeItems.some((x) => x.channel === 'RTL'), true);
+  assert.equal(primeItems.some((x) => x.channel === 'Sky Sport F1'), true);
 
   ctx.updateViewCounts(berlin1440);
   assert.equal(ctx._getEl('tabLiveCount').textContent, String(nowItems.length));
   assert.equal(ctx._getEl('tabPrimeCount').textContent, String(primeItems.length));
 
-  // Tab-Switch zwischen live, primetime und list + Spur-Filter + Trailer/Watchlist CTAs
+  // macOS Desktop: echte <a href="skygo://" data-sky-copy="..."> Anchors in BEIDEN Tabs (● Live & 20:15), ohne target="_blank"
   ctx.switchMainView('primetime');
   ctx.renderLiveView(berlin1440);
   const primeHtml = ctx._getEl('liveView').innerHTML;
@@ -338,18 +385,28 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt un
   assert.match(primeHtml, /Heute ab 20:15 Uhr/);
   assert.match(primeHtml, /★ Watchlist/);
   assert.match(primeHtml, /▶ Trailer/);
+  assert.match(primeHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Formel 1: Großer Preis der USA"/);
+  assert.doesNotMatch(primeHtml, /href="skygo:\/\/"[^>]*target="_blank"/);
 
   ctx.switchMainView('live');
   ctx.renderLiveView(berlin1440);
   const liveHtml = ctx._getEl('liveView').innerHTML;
   assert.equal(ctx._getEl('app').classList.contains('view-live'), true);
   assert.match(liveHtml, /Jetzt live im TV/);
-  assert.match(liveHtml, /noch 80 Min\.|● LIVE/);
-  assert.match(liveHtml, /ARD Livestream ↗|Sky Go öffnen ↗/);
+  assert.match(liveHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport News Live"/);
+  assert.match(liveHtml, /ARD Livestream ↗/);
 
+  // Spur-Filter funktioniert weiter
   vm.runInContext(`activeLiveTrackFilter = 'sat'; renderLiveView(new Date('2026-11-17T13:40:00Z'));`, ctx);
-  assert.doesNotMatch(ctx._getEl('liveView').innerHTML, /The Last of Us/);
-  assert.match(ctx._getEl('liveView').innerHTML, /Watzmann ermittelt/);
+  assert.doesNotMatch(ctx._getEl('liveView').innerHTML, /Sky Sport News Live/);
+  assert.match(ctx._getEl('liveView').innerHTML, /Wer weiß denn sowas\?/);
+
+  // iPhone/iOS nutzt weiterhin fehlerfreien https-Link mit target="_blank"
+  const iosCtx = loadAppContext({ platform: 'iPhone', maxTouchPoints: 5 });
+  vm.runInContext(`liveTvData = ${JSON.stringify(sampleLive)}; switchMainView('live'); renderLiveView(new Date('2026-11-17T13:40:00Z'));`, iosCtx);
+  const iosHtml = iosCtx._getEl('liveView').innerHTML;
+  assert.match(iosHtml, /href="https:\/\/www\.sky\.de\/tvguide" target="_blank" rel="noopener"[^>]*>Sky Guide ↗<\/a>/);
+  assert.doesNotMatch(iosHtml, /href="skygo:\/\/"/);
 
   ctx.switchMainView('list');
   assert.equal(ctx._getEl('liveView').classList.contains('hidden'), true);
@@ -360,23 +417,51 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy v
   vm.runInContext(`
     handleLivePrimaryAction({
       id: 'sky1',
-      channel: 'Sky Cinema Premiere',
+      channel: 'Sky Sport Bundesliga',
       track: 'sky',
-      title: 'The Last of Us',
+      title: 'Topspiel live',
       webUrl: 'https://www.sky.de/tvguide',
     });
   `, macCtx);
-  assert.equal(macCtx._getCopiedText(), 'The Last of Us');
+  assert.equal(macCtx._getCopiedText(), 'Topspiel live');
   assert.equal(macCtx.window.location.href, 'skygo://');
   assert.equal(macCtx._opens.length, 0);
+
+  // nativer $liveView Klick auf a[data-sky-copy] kopiert Titel + Toast und verhindert Default-Navigation NICHT
+  macCtx.bindEvents();
+  let prevented = false;
+  macCtx._getEl('liveView').dispatchEvent({
+    type: 'click',
+    target: {
+      closest(sel) {
+        if (sel === 'a[data-sky-copy]') {
+          return { getAttribute: (k) => (k === 'data-sky-copy' ? 'Formel 1: USA' : null) };
+        }
+        return null;
+      },
+    },
+    preventDefault() { prevented = true; },
+  });
+  assert.equal(prevented, false);
+  assert.equal(macCtx._getCopiedText(), 'Formel 1: USA');
+  assert.equal(macCtx._toasts.some((t) => t.msg.includes('Formel 1: USA') && t.msg.includes('⌘V')), true);
+
+  // Magazin-Detail (✦ Fuer dich) rendert auf macOS bei Sky ebenfalls nativen skygo://-Anchor
+  vm.runInContext(`
+    magazine = {
+      sections: [{ id: 'neu', items: [{ key: 'm1', tmdb_id: 99, type: 'movie', title: 'Sky Exclusiv Film', providers_app: ['sky'] }] }],
+    };
+    openMagazineItemDetail('m1');
+  `, macCtx);
+  assert.match(macCtx._getEl('magazineModalBody').innerHTML, /<a class="btn-primary-cta" href="skygo:\/\/" data-sky-copy="Sky Exclusiv Film"/);
 
   const iosCtx = loadAppContext({ platform: 'iPhone', maxTouchPoints: 5 });
   vm.runInContext(`
     handleLivePrimaryAction({
       id: 'sky1',
-      channel: 'Sky Cinema Premiere',
+      channel: 'Sky Sport Bundesliga',
       track: 'sky',
-      title: 'The Last of Us',
+      title: 'Topspiel live',
       webUrl: 'https://www.sky.de/tvguide',
     });
     handleLivePrimaryAction({
