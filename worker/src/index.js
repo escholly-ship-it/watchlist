@@ -2038,113 +2038,53 @@ function pickFanOf(c, tasteSample) {
 
 
 // ─────────────────────────────────────────────────────────────────────────
-// Live-TV & 20:15 3-Spur-EPG (Satellit · MagentaTV HD · Sky Stream)
+// Live-TV & 20:15 3-Spur-EPG (Paket B: 10 Echt-Live-Sender)
 // ─────────────────────────────────────────────────────────────────────────
 
-const LIVE_TV_KV_KEY = 'live_tv:v1';
+const LIVE_TV_KV_KEY = 'live_tv:v2';
 const LIVE_TV_TTL_MS = 10 * 60 * 1000;
 const LIVE_TV_FORCE_COOLDOWN_MS = 30 * 1000;
 const LIVE_TV_FETCH_TIMEOUT_MS = 4500;
-const LIVE_TV_TMDB_MAX = 8;
+const LIVE_TV_TMDB_MAX = 4;
 const LIVE_TV_BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
-const LIVE_TV_SAT_CHANNELS = {
-  'das erste': { shortChannel: 'DAS ERSTE', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'ard': { shortChannel: 'DAS ERSTE', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'zdf': { shortChannel: 'ZDF HD', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
-  'arte': { shortChannel: 'ARTE HD', webUrl: 'https://www.arte.tv/de/live/', mediathekServiceId: 'arte' },
-  '3sat': { shortChannel: '3SAT HD', webUrl: 'https://www.3sat.de/programm/livestream', mediathekServiceId: '3sat' },
-  'zdfneo': { shortChannel: 'ZDFNEO', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
-  'zdfinfo': { shortChannel: 'ZDFINFO', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
-  'one': { shortChannel: 'ONE HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'kika': { shortChannel: 'KIKA HD', webUrl: 'https://www.kika.de/tv-programm/live', mediathekServiceId: 'kika' },
-  'wdr': { shortChannel: 'WDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'ndr': { shortChannel: 'NDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'br': { shortChannel: 'BR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'swr': { shortChannel: 'SWR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'mdr': { shortChannel: 'MDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'hr': { shortChannel: 'HR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'rbb': { shortChannel: 'RBB HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'phoenix': { shortChannel: 'PHOENIX', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'tagesschau24': { shortChannel: 'TAGESSCHAU24', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'ard-alpha': { shortChannel: 'ARD-ALPHA', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
-  'servustv': { shortChannel: 'SERVUSTV', webUrl: 'https://www.servustv.com/jetzt-live/', mediathekServiceId: null },
-  'df1': { shortChannel: 'DF1 HD', webUrl: 'https://www.servustv.com/jetzt-live/', mediathekServiceId: null },
-};
-
-const LIVE_TV_MAGENTA_CHANNELS = {
-  'rtl': { shortChannel: 'RTL HD', mediathekServiceId: 'rtl' },
-  'prosieben': { shortChannel: 'PROSIEBEN', mediathekServiceId: 'magenta' },
-  'sat.1': { shortChannel: 'SAT.1 HD', mediathekServiceId: 'magenta' },
-  'vox': { shortChannel: 'VOX HD', mediathekServiceId: 'rtl' },
-  'kabel eins': { shortChannel: 'KABEL EINS', mediathekServiceId: 'magenta' },
-  'nitro': { shortChannel: 'NITRO HD', mediathekServiceId: 'rtl' },
-  'rtl zwei': { shortChannel: 'RTLZWEI', mediathekServiceId: 'rtl' },
-  'prosieben maxx': { shortChannel: 'PRO7 MAXX', mediathekServiceId: 'magenta' },
-  'sixx': { shortChannel: 'SIXX HD', mediathekServiceId: 'magenta' },
-  'sat.1 gold': { shortChannel: 'SAT.1 GOLD', mediathekServiceId: 'magenta' },
-  'super rtl': { shortChannel: 'SUPER RTL', mediathekServiceId: 'rtl' },
-  'sport1': { shortChannel: 'SPORT1 HD', mediathekServiceId: 'magenta' },
-  'eurosport 1': { shortChannel: 'EUROSPORT 1', mediathekServiceId: 'magenta' },
-  'dmax': { shortChannel: 'DMAX HD', mediathekServiceId: 'magenta' },
-  'tele 5': { shortChannel: 'TELE 5 HD', mediathekServiceId: 'magenta' },
-  'disney channel': { shortChannel: 'DISNEY CH.', mediathekServiceId: 'magenta' },
-  'comedy central': { shortChannel: 'COMEDY C.', mediathekServiceId: 'magenta' },
-  'welt': { shortChannel: 'WELT HD', mediathekServiceId: 'magenta' },
-  'ntv': { shortChannel: 'NTV HD', mediathekServiceId: 'rtl' },
-  'voxup': { shortChannel: 'VOXUP', mediathekServiceId: 'rtl' },
-  'rtlup': { shortChannel: 'RTLUP', mediathekServiceId: 'rtl' },
-};
-
-const LIVE_TV_SKY_PAGES = [
-  { channel: 'Sky Cinema Premiere', slug: 'sky-cinema-premiere,CIN.html', slotHint: 'movie' },
-  { channel: 'Sky Cinema Highlights', slug: 'sky-cinema-highlights,SKYCH.html', slotHint: 'movie' },
-  { channel: 'Sky Atlantic', slug: 'sky-atlantic,SKYAT.html', slotHint: 'series' },
-  { channel: 'Sky Sport Bundesliga', slug: 'sky-sport-bundesliga,BULI.html', slotHint: 'sport' },
-  { channel: 'Sky Sport Top Event', slug: 'sky-sport-top-event,SKYSTE.html', slotHint: 'sport' },
+const LIVE_TV_CURATED_CHANNELS = [
+  { channel: 'Das Erste', aliases: ['das erste', 'ard', 'das erste hd'], shortChannel: 'DAS ERSTE', slug: 'das-erste,ARD.html', track: 'sat', trackLabel: 'SAT HD', badge: 'SAT', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard', kind: 'general' },
+  { channel: 'ZDF', aliases: ['zdf', 'zdf hd'], shortChannel: 'ZDF HD', slug: 'zdf,ZDF.html', track: 'sat', trackLabel: 'SAT HD', badge: 'SAT', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf', kind: 'general' },
+  { channel: 'Sky Sport Bundesliga', aliases: ['sky sport bundesliga', 'sky sport bundesliga hd'], shortChannel: 'SKY BUNDESLIGA', slug: 'sky-sport-bundesliga,BULI.html', track: 'sky', trackLabel: 'SKY · 202', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
+  { channel: 'Sky Sport Top Event', aliases: ['sky sport top event', 'sky sport top event hd'], shortChannel: 'SKY TOP EVENT', slug: 'sky-sport-top-event,SKYSTE.html', track: 'sky', trackLabel: 'SKY · 201', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
+  { channel: 'Sky Sport News', aliases: ['sky sport news', 'sky sport news hd'], shortChannel: 'SKY SPORT NEWS', slug: 'sky-sport-news,SNHD.html', track: 'sky', trackLabel: 'SKY · 200', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
+  { channel: 'Sky Sport Premier League', aliases: ['sky sport premier league', 'sky sport premier league hd'], shortChannel: 'SKY PREMIER L.', slug: 'sky-sport-premier-league,SKYSPL.html', track: 'sky', trackLabel: 'SKY · 203', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
+  { channel: 'Sky Sport F1', aliases: ['sky sport f1', 'sky sport f1 hd'], shortChannel: 'SKY SPORT F1', slug: 'sky-sport-f1,SKYF1.html', track: 'sky', trackLabel: 'SKY · 207', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
+  { channel: 'RTL', aliases: ['rtl', 'rtl hd'], shortChannel: 'RTL HD', slug: 'rtl,RTL.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'MAGENTA', webUrl: 'https://web.magentatv.de/tv-guide', mediathekServiceId: 'rtl', kind: 'general' },
+  { channel: 'Sat.1', aliases: ['sat.1', 'sat1', 'sat 1', 'sat.1 hd'], shortChannel: 'SAT.1 HD', slug: 'sat1,SAT1.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'MAGENTA', webUrl: 'https://web.magentatv.de/tv-guide', mediathekServiceId: 'magenta', kind: 'general' },
+  { channel: 'ProSieben', aliases: ['prosieben', 'pro7', 'prosieben hd'], shortChannel: 'PROSIEBEN', slug: 'prosieben,PRO7.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'MAGENTA', webUrl: 'https://web.magentatv.de/tv-guide', mediathekServiceId: 'magenta', kind: 'general' },
 ];
 
-const LIVE_TV_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|doppelpass|sportstudio|nachrichten|teletext|börse|boerse)\b/i;
+const LIVE_TV_CHANNEL_BY_ALIAS = new Map();
+for (const ch of LIVE_TV_CURATED_CHANNELS) {
+  for (const a of ch.aliases) {
+    LIVE_TV_CHANNEL_BY_ALIAS.set(a, ch);
+  }
+}
+
+const LIVE_TV_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|f1\b|grand prix|doppelpass|sportstudio|nachrichten|teletext|börse|boerse|sky sport|premier league|champions league|europa league|dfb-pokal|länderspiel|laenderspiel|wm-quali|em-quali|atp\b|wta\b|nfl\b|nhl\b|darts|tv total|wer wird millionär|wer weiss denn sowas|wer weiß denn sowas|bauer sucht frau|galileo|newstime|exclusiv|explosiv|zdf magazin|heute-show|maischberger|markus lanz|maybrit illner|hart aber fair|arenal)\b/i;
 
 function resolveChannelMeta(rawChannel) {
   const clean = String(rawChannel || '').replace(/\s+/g, ' ').trim();
-  const key = clean.toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(LIVE_TV_SAT_CHANNELS, key)) {
-    const info = LIVE_TV_SAT_CHANNELS[key];
-    return {
-      channel: clean,
-      shortChannel: info.shortChannel,
-      track: 'sat',
-      trackLabel: 'SAT HD',
-      badge: 'SAT',
-      webUrl: info.webUrl,
-      mediathekServiceId: info.mediathekServiceId,
-    };
-  }
-  if (Object.prototype.hasOwnProperty.call(LIVE_TV_MAGENTA_CHANNELS, key)) {
-    const info = LIVE_TV_MAGENTA_CHANNELS[key];
-    return {
-      channel: clean,
-      shortChannel: info.shortChannel,
-      track: 'magenta',
-      trackLabel: 'MAGENTA HD',
-      badge: 'MAGENTA',
-      webUrl: 'https://web.magentatv.de/tv-guide',
-      mediathekServiceId: info.mediathekServiceId,
-    };
-  }
-  if (/^(sky\s+(cinema|atlantic|showcase|one|replay|krimi|crime|documentaries|nature|sport)|warner tv\b)/i.test(clean)) {
-    return {
-      channel: clean.replace(/^sky\s+/i, 'Sky '),
-      shortChannel: clean.toUpperCase().slice(0, 14),
-      track: 'sky',
-      trackLabel: 'SKY · HDMI 3',
-      badge: 'SKY',
-      webUrl: 'https://www.sky.de/tvguide',
-      mediathekServiceId: 'sky',
-    };
-  }
-  return null;
+  const lower = clean.toLowerCase();
+  const bare = lower.replace(/\s+(hd|uhd)$/i, '').trim();
+  const cfg = LIVE_TV_CHANNEL_BY_ALIAS.get(lower) || LIVE_TV_CHANNEL_BY_ALIAS.get(bare);
+  if (!cfg) return null;
+  return {
+    channel: cfg.channel,
+    shortChannel: cfg.shortChannel,
+    track: cfg.track,
+    trackLabel: cfg.trackLabel,
+    badge: cfg.badge,
+    webUrl: cfg.webUrl,
+    mediathekServiceId: cfg.mediathekServiceId,
+  };
 }
 
 function decodeXmlEntities(str) {
@@ -2252,60 +2192,112 @@ function parseTvSpielfilmRss(xmlText, slot, nowMin) {
   return items;
 }
 
-function parseSkyChannelHtml(html, channelName, slotHint, nowMin) {
-  if (!html || typeof html !== 'string') return [];
+function extractCol3Title(col3Html) {
+  if (!col3Html) return '';
+  const sendungMatch = col3Html.match(/<a[^>]+href="[^"]*\/tv-programm\/sendung\/[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
+  if (sendungMatch) {
+    const t = decodeXmlEntities(sendungMatch[1]);
+    if (t) return t;
+  }
+  for (const m of col3Html.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const t = decodeXmlEntities(m[1]);
+    if (t) return t;
+  }
+  const strongMatch = col3Html.match(/<strong>([\s\S]*?)<\/strong>/i);
+  return strongMatch ? decodeXmlEntities(strongMatch[1]) : '';
+}
+
+function buildLiveItemFromRow(chCfg, rowMeta, { isLive, slot }) {
+  const { startTime, endTime, title, desc, progressPct } = rowMeta;
+  const suffix = slot === 'primetime' ? '2015_' : '';
+  return {
+    id: `${chCfg.track}_${chCfg.shortChannel}_${suffix}${startTime}_${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64),
+    channel: chCfg.channel,
+    shortChannel: chCfg.shortChannel,
+    track: chCfg.track,
+    trackLabel: chCfg.trackLabel,
+    badge: chCfg.badge,
+    webUrl: chCfg.webUrl,
+    mediathekServiceId: chCfg.mediathekServiceId,
+    title,
+    description: desc,
+    startTime,
+    endTime,
+    isLive,
+    progressPct: isLive ? progressPct : 0,
+    slot,
+    imageUrl: '',
+    tmdbId: null,
+    mediaType: null,
+    rating: null,
+    posterPath: null,
+  };
+}
+
+function pickPrimetimeRow(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  // Tier 1: Haupt-20:15-Sendung (>= 25 Min., Start 20:00..20:45 — ueberspringt 5-Min.-Vorlauf & kurze Nachrichten)
+  const tier1 = rows
+    .filter((r) => r.startMin >= 20 * 60 && r.startMin <= 20 * 60 + 45 && r.dur >= 25)
+    .sort((a, b) => Math.abs(a.startMin - (20 * 60 + 15)) - Math.abs(b.startMin - (20 * 60 + 15)));
+  if (tier1.length > 0) return tier1[0];
+
+  // Tier 2: Laengere Live-Uebertragung ab 19:15..20:14 ueber 20:15 hinweg (z. B. 19:30-21:30 Bundesliga)
+  const tier2 = rows
+    .filter((r) => r.startMin >= 19 * 60 + 15 && r.startMin < 20 * 60 + 15 && r.endAdj >= 20 * 60 + 35)
+    .sort((a, b) => b.startMin - a.startMin);
+  if (tier2.length > 0) return tier2[0];
+
+  // Tier 3: Fallback fuer Sendungen rund um 20:20 oder im klassischen 19:45..21:15-Fenster
+  const tier3 = rows.filter(
+    (r) => (r.startMin <= 20 * 60 + 20 && r.endAdj > 20 * 60 + 20)
+      || (r.startMin >= 19 * 60 + 45 && r.startMin <= 21 * 60 + 15),
+  );
+  if (tier3.length === 0) return null;
+  tier3.sort((a, b) => Math.abs(a.startMin - (20 * 60 + 15)) - Math.abs(b.startMin - (20 * 60 + 15)));
+  return tier3[0];
+}
+
+function parseChannelScheduleHtml(html, chCfg, nowMin) {
+  if (!html || typeof html !== 'string' || !chCfg) return { live: null, primetime: null };
   const rows = html.match(/<tr[^>]*class="hover"[\s\S]*?<\/tr>/gi) || [];
   const parsed = [];
-  for (const row of rows.slice(0, 16)) {
+  for (const row of rows.slice(0, 40)) {
     const tm = row.match(/(\d{2}:\d{2})\s*[-–]\s*(\d{2}:\d{2})/);
     const col3 = row.match(/class="col-3"[^>]*>([\s\S]*?)<\/td>/i);
     if (!tm || !col3) continue;
-    const linkMatch = col3[1].match(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-    const title = decodeXmlEntities(linkMatch ? linkMatch[2] : col3[1]);
+    const title = extractCol3Title(col3[1]);
     if (!title) continue;
     const col4 = row.match(/class="col-4"[^>]*>([\s\S]*?)<\/td>/i);
+    const col5 = row.match(/class="col-5"[^>]*>([\s\S]*?)<\/td>/i);
     const genre = col4 ? decodeXmlEntities(col4[1]) : '';
+    const cat = col5 ? decodeXmlEntities(col5[1]) : '';
+    const descHead = genre && cat && genre.toLowerCase() !== cat.toLowerCase()
+      ? `${genre} (${cat})`
+      : (genre || cat);
+    const desc = descHead ? `${descHead} · ${chCfg.channel}` : chCfg.channel;
+
     const startTime = tm[1];
     const endTime = tm[2];
     const startMin = parseHhMmToMinutes(startTime);
-    let endMin = parseHhMmToMinutes(endTime);
-    if (startMin !== null && endMin !== null && endMin <= startMin) endMin += 1440;
+    const rawEndMin = parseHhMmToMinutes(endTime);
+    if (startMin === null || rawEndMin === null) continue;
+    const endAdj = rawEndMin <= startMin ? rawEndMin + 1440 : rawEndMin;
+    const dur = endAdj - startMin;
     let cur = nowMin;
-    if (startMin !== null && cur < startMin && endMin !== null && cur + 1440 <= endMin + 30) cur += 1440;
-    const isLive = startMin !== null && endMin !== null && cur >= startMin && cur < endMin;
+    if (cur < startMin && cur + 1440 <= endAdj + 30) cur += 1440;
+    const isLive = cur >= startMin && cur < endAdj;
     const progressPct = isLive ? computeProgressPct(startTime, endTime, nowMin, true) : 0;
-    const meta = resolveChannelMeta(channelName);
-    if (!meta) continue;
-    const isEvening = startMin !== null && startMin >= 19 * 60 + 45;
-    const slot = slotHint === 'sport' ? 'sport' : (isLive ? 'now' : 'primetime');
 
-    parsed.push({
-      id: `${meta.track}_${meta.shortChannel}_${startTime}_${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64),
-      ...meta,
-      title,
-      description: genre ? `${genre} · ${channelName}` : channelName,
-      startTime,
-      endTime,
-      isLive,
-      isEvening,
-      progressPct,
-      slot,
-      imageUrl: '',
-      tmdbId: null,
-      mediaType: null,
-      rating: null,
-      posterPath: null,
-    });
+    parsed.push({ startTime, endTime, startMin, endAdj, dur, title, desc, isLive, progressPct });
   }
-  const liveItem = parsed.find((x) => x.isLive) || parsed[0];
-  const eveningItem = parsed.find((x) => !x.isLive && x.isEvening);
-  const out = [];
-  if (liveItem) { delete liveItem.isEvening; out.push(liveItem); }
-  if (eveningItem && (!liveItem || eveningItem.title !== liveItem.title)) {
-    delete eveningItem.isEvening;
-    out.push(eveningItem);
-  }
-  return out;
+  if (parsed.length === 0) return { live: null, primetime: null };
+  const liveRow = parsed.find((x) => x.isLive) || parsed[0];
+  const primeRow = pickPrimetimeRow(parsed);
+  return {
+    live: liveRow ? buildLiveItemFromRow(chCfg, liveRow, { isLive: true, slot: 'now' }) : null,
+    primetime: primeRow ? buildLiveItemFromRow(chCfg, primeRow, { isLive: false, slot: 'primetime' }) : null,
+  };
 }
 
 async function fetchTextTimeout(url, timeoutMs = LIVE_TV_FETCH_TIMEOUT_MS) {
@@ -2331,7 +2323,7 @@ async function enrichLiveHighlights(candidates, env) {
   let enriched = 0;
   for (const item of candidates) {
     if (enriched >= LIVE_TV_TMDB_MAX || tmdbCalls >= TMDB_CALL_CEILING) break;
-    if (!item || !item.title || item.slot === 'sport') continue;
+    if (!item || !item.title || item.slot === 'sport' || item.track === 'sky') continue;
     if (LIVE_TV_NON_TMDB_RE.test(item.title)) continue;
     const normTitle = item.title.replace(/\s*\([^)]*\)\s*$/g, '').trim();
     const key = normTitle.toLowerCase();
@@ -2392,36 +2384,67 @@ async function handleLiveTv(env, url) {
   }
 
   const nowMin = berlinMinutesNow(new Date(nowMs));
-  const [jetztXml, p2015Xml, filmeXml, bl1Text, ...skyHtmls] = await Promise.all([
+  const [jetztXml, p2015Xml, bl1Text, ...channelHtmls] = await Promise.all([
     fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/jetzt.xml'),
     fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/heute2015.xml'),
-    fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/filme.xml'),
     fetchTextTimeout('https://api.openligadb.de/getmatchdata/bl1'),
-    ...LIVE_TV_SKY_PAGES.map((p) => fetchTextTimeout(`https://www.tvspielfilm.de/tv-programm/sendungen/${p.slug}`)),
+    ...LIVE_TV_CURATED_CHANNELS.map((c) => fetchTextTimeout(`https://www.tvspielfilm.de/tv-programm/sendungen/${c.slug}`)),
   ]);
 
   const nowRss = parseTvSpielfilmRss(jetztXml, 'now', nowMin);
   const primeRss = parseTvSpielfilmRss(p2015Xml, 'primetime', nowMin);
-  const filmRss = parseTvSpielfilmRss(filmeXml, 'primetime', nowMin);
 
-  // Build image lookup by channel+title from RSS feeds (e.g. filme.xml carries Sky Cinema 20:15 covers)
+  // Image & synopsis lookup by channel+title from RSS feeds
   const rssImageMap = new Map();
-  for (const it of [...filmRss, ...primeRss, ...nowRss]) {
-    if (it.imageUrl) rssImageMap.set(`${it.channel.toLowerCase()}|${it.title.toLowerCase()}`, it.imageUrl);
+  const rssDescMap = new Map();
+  for (const it of [...primeRss, ...nowRss]) {
+    const key = `${it.channel.toLowerCase()}|${it.title.toLowerCase()}`;
+    if (it.imageUrl && !rssImageMap.has(key)) rssImageMap.set(key, it.imageUrl);
+    if (it.description && !rssDescMap.has(key)) rssDescMap.set(key, it.description);
   }
 
-  const skyParsed = [];
-  LIVE_TV_SKY_PAGES.forEach((pageCfg, idx) => {
-    const list = parseSkyChannelHtml(skyHtmls[idx], pageCfg.channel, pageCfg.slotHint, nowMin);
-    for (const entry of list) {
-      const matchImg = rssImageMap.get(`${entry.channel.toLowerCase()}|${entry.title.toLowerCase()}`);
-      if (matchImg) entry.imageUrl = matchImg;
-      skyParsed.push(entry);
+  const applyRssMeta = (entry) => {
+    const key = `${entry.channel.toLowerCase()}|${entry.title.toLowerCase()}`;
+    const img = rssImageMap.get(key);
+    const desc = rssDescMap.get(key);
+    if (img) entry.imageUrl = img;
+    if (desc && desc.length > (entry.description || '').length) entry.description = desc;
+    return entry;
+  };
+
+  const htmlNow = [];
+  const htmlPrime = [];
+  const htmlNowChannels = new Set();
+  const htmlPrimeChannels = new Set();
+
+  LIVE_TV_CURATED_CHANNELS.forEach((chCfg, idx) => {
+    const { live, primetime } = parseChannelScheduleHtml(channelHtmls[idx], chCfg, nowMin);
+    if (live) {
+      htmlNow.push(applyRssMeta(live));
+      htmlNowChannels.add(live.channel.toLowerCase());
+    }
+    if (primetime) {
+      htmlPrime.push(applyRssMeta(primetime));
+      htmlPrimeChannels.add(primetime.channel.toLowerCase());
     }
   });
 
-  // Next Bundesliga fixture card on Sky Sport Bundesliga
-  const sportList = skyParsed.filter((x) => x.slot === 'sport');
+  const nowMerged = dedupeLiveItems([
+    ...htmlNow,
+    ...nowRss.filter((x) => !htmlNowChannels.has(x.channel.toLowerCase())),
+  ]).slice(0, 15);
+
+  const primetimeMerged = dedupeLiveItems([
+    ...htmlPrime,
+    ...primeRss.filter((x) => {
+      if (htmlPrimeChannels.has(x.channel.toLowerCase())) return false;
+      const m = parseHhMmToMinutes(x.startTime);
+      return m === null || (m >= 19 * 60 + 15 && m <= 21 * 60 + 15);
+    }),
+  ]).slice(0, 15);
+
+  // Next Bundesliga fixture card on Sky Sport Bundesliga (supplemental OpenLigaDB card)
+  const sportList = [];
   if (bl1Text) {
     try {
       const matches = JSON.parse(bl1Text);
@@ -2435,7 +2458,7 @@ async function handleLiveTv(env, url) {
         const hhmm = dtStr.length >= 16 ? dtStr.slice(11, 16) : '20:30';
         const dateLabel = dtStr.length >= 10 ? `${dtStr.slice(8, 10)}.${dtStr.slice(5, 7)}.` : '';
         const meta = resolveChannelMeta('Sky Sport Bundesliga');
-        sportList.unshift({
+        sportList.push({
           id: `sky_bl1_${t1}_${t2}`.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
           ...meta,
           title: `Bundesliga: ${t1} – ${t2}`,
@@ -2457,64 +2480,21 @@ async function handleLiveTv(env, url) {
     }
   }
 
-  const nowMerged = dedupeLiveItems([
-    ...skyParsed.filter((x) => x.isLive && x.slot !== 'sport'),
-    ...nowRss,
-  ]).slice(0, 20);
+  const sportMerged = dedupeLiveItems(sportList).slice(0, 4);
 
-  const filmPrimetime = filmRss.filter((x) => {
-    const m = parseHhMmToMinutes(x.startTime);
-    return m !== null && m >= 19 * 60 + 45 && m <= 21 * 60 + 15;
-  });
-
-  const primetimeMerged = dedupeLiveItems([
-    ...filmPrimetime.filter((x) => x.track === 'sky'),
-    ...primeRss.filter((x) => {
-      const m = parseHhMmToMinutes(x.startTime);
-      return m === null || (m >= 19 * 60 + 45 && m <= 21 * 60 + 15);
-    }),
-    ...filmPrimetime,
-    ...skyParsed.filter((x) => {
-      const m = parseHhMmToMinutes(x.startTime);
-      return !x.isLive && x.slot === 'primetime' && m !== null && m >= 19 * 60 + 45 && m <= 21 * 60 + 15;
-    }),
-  ]).slice(0, 22);
-
-  const sportMerged = dedupeLiveItems(sportList).slice(0, 6);
-
-  // Enrich top film/series highlights via TMDB (strictly <= LIVE_TV_TMDB_MAX calls)
+  // Enrich only rare non-sport Free-TV movies/series via TMDB (strictly <= 4 calls, never Sky Sport)
   const enrichTargets = [
-    ...primetimeMerged.filter((x) => x.track === 'sky' || x.shortChannel === 'ARTE HD' || x.shortChannel === '3SAT HD' || x.shortChannel === 'DAS ERSTE' || x.shortChannel === 'ZDF HD'),
-    ...nowMerged.filter((x) => x.track === 'sky' || x.shortChannel === 'ARTE HD' || x.shortChannel === 'ZDFNEO'),
+    ...primetimeMerged.filter((x) => x.track !== 'sky'),
+    ...nowMerged.filter((x) => x.track !== 'sky'),
   ];
   await enrichLiveHighlights(enrichTargets, env);
 
-  // Propagate enriched TMDB metadata across duplicate title appearances
-  const tmdbByTitle = new Map();
-  for (const it of enrichTargets) {
-    if (it.tmdbId) tmdbByTitle.set(it.title.toLowerCase(), it);
-  }
-  for (const it of [...nowMerged, ...primetimeMerged]) {
-    if (!it.tmdbId) {
-      const hit = tmdbByTitle.get(it.title.toLowerCase());
-      if (hit) {
-        it.tmdbId = hit.tmdbId;
-        it.mediaType = hit.mediaType;
-        it.rating = hit.rating;
-        it.posterPath = hit.posterPath;
-        if (hit.imageUrl) it.imageUrl = hit.imageUrl;
-      }
-    }
-  }
-
-  // Curated 8-item mixed spotlight across all 3 tracks (Sat · Magenta · Sky)
+  // Curated mixed spotlight across all 3 tracks (Sat · Sky Sport · Magenta)
   const spotlight = dedupeLiveItems([
-    ...nowMerged.filter((x) => x.track === 'sky').slice(0, 1),
-    ...primetimeMerged.filter((x) => x.track === 'sky').slice(0, 1),
-    ...nowMerged.filter((x) => x.track === 'sat').slice(0, 1),
+    ...nowMerged.filter((x) => x.track === 'sky').slice(0, 2),
     ...primetimeMerged.filter((x) => x.track === 'sat').slice(0, 2),
-    ...nowMerged.filter((x) => x.track === 'magenta').slice(0, 1),
-    ...primetimeMerged.filter((x) => x.track === 'magenta').slice(0, 1),
+    ...nowMerged.filter((x) => x.track === 'sat').slice(0, 2),
+    ...primetimeMerged.filter((x) => x.track === 'magenta').slice(0, 2),
     ...sportMerged.slice(0, 1),
     ...primetimeMerged,
     ...nowMerged,

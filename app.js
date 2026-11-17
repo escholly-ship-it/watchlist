@@ -2177,7 +2177,16 @@ function bindEvents() {
   if ($tabLivePrime) $tabLivePrime.addEventListener('click', () => switchMainView('primetime'));
   document.getElementById('magazineModalClose').addEventListener('click', () => closeMagazineModal());
   $magazineModal.addEventListener('click', (e) => {
-    if (e.target === $magazineModal) closeMagazineModal();
+    if (e.target === $magazineModal) { closeMagazineModal(); return; }
+    const skyCta = e.target.closest('a[data-sky-copy]');
+    if (skyCta) {
+      const title = skyCta.getAttribute('data-sky-copy') || '';
+      if (title) copyTextToClipboard(title);
+      showAutoAddToast(
+        title ? `„${title}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…',
+        'info',
+      );
+    }
   });
   const $trailerClose = document.getElementById('trailerModalClose');
   if ($trailerClose) $trailerClose.addEventListener('click', closeTrailerModal);
@@ -2199,6 +2208,16 @@ function bindEvents() {
       if (trackChip) {
         activeLiveTrackFilter = trackChip.dataset.liveTrack || 'all';
         renderLiveView();
+        return;
+      }
+      const skyCta = e.target.closest('a[data-sky-copy]');
+      if (skyCta) {
+        const copyTitle = skyCta.getAttribute('data-sky-copy') || '';
+        if (copyTitle) copyTextToClipboard(copyTitle);
+        showAutoAddToast(
+          copyTitle ? `„${copyTitle}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…',
+          'info',
+        );
         return;
       }
       const actBtn = e.target.closest('[data-live-act][data-live-id]');
@@ -2342,26 +2361,18 @@ let liveTvData = null;
 let liveTvFetching = false;
 let activeLiveTrackFilter = 'all'; // 'all' | 'sat' | 'magenta' | 'sky'
 const liveTvIndex = new Map();
-const LIVE_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|doppelpass|sportstudio|nachrichten|teletext|börse|boerse)\b/i;
+const LIVE_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|f1\b|grand prix|doppelpass|sportstudio|nachrichten|teletext|börse|boerse|sky sport|premier league|champions league|europa league|dfb-pokal|länderspiel|laenderspiel|wm-quali|em-quali|atp\b|wta\b|nfl\b|nhl\b|darts|tv total|wer wird millionär|wer weiss denn sowas|wer weiß denn sowas|bauer sucht frau|galileo|newstime|exclusiv|explosiv|zdf magazin|heute-show|maischberger|markus lanz|maybrit illner|hart aber fair|arenal)\b/i;
 
-const LIVE_SAT_ALLOW = new Set([
-  'das erste', 'ard', 'zdf', 'arte', '3sat', 'zdfneo', 'zdf info', 'zdfinfo', 'one', 'kika',
-  'wdr', 'wdr fernsehen', 'ndr', 'ndr fernsehen', 'br', 'br fernsehen', 'swr', 'swr sr', 'swr fernsehen',
-  'mdr', 'mdr fernsehen', 'hr', 'hr fernsehen', 'rbb', 'rbb fernsehen', 'phoenix', 'tagesschau24',
-  'ard alpha', 'servustv', 'servus tv', 'df1', 'eurosport 1', 'eurosport',
-]);
-const LIVE_MAGENTA_ALLOW = new Set([
-  'rtl', 'prosieben', 'pro7', 'sat 1', 'sat1', 'vox', 'kabel eins', 'kabel 1', 'nitro', 'rtl nitro',
-  'rtl zwei', 'rtlzwei', 'rtl2', 'rtl ii', 'prosieben maxx', 'pro7 maxx', 'sixx', 'sat 1 gold',
-  'super rtl', 'toggo plus', 'sport1', 'dmax', 'tele 5', 'disney channel', 'comedy central',
-  'welt', 'ntv', 'n tv', 'voxup', 'rtlup',
-]);
+// Paket B (10 Echt-Live-Sender): ARD, ZDF · RTL, Sat.1, ProSieben · Sky Sport News/Top Event/BL/PL/F1
+const LIVE_SAT_ALLOW = new Set(['das erste', 'ard', 'zdf']);
+const LIVE_MAGENTA_ALLOW = new Set(['rtl', 'sat 1', 'sat1', 'prosieben', 'pro7']);
 const LIVE_SKY_PREFIXES = [
-  'sky cinema', 'sky atlantic', 'sky showcase', 'sky one', 'sky replay',
-  'sky krimi', 'sky crime', 'sky documentaries', 'sky nature', 'sky sport',
-  'warner tv',
+  'sky sport news',
+  'sky sport top event',
+  'sky sport bundesliga',
+  'sky sport premier league',
+  'sky sport f1',
 ];
-const LIVE_REGIONAL_SIMULCAST_RE = /^(wdr|ndr|br|swr|mdr|hr|rbb)\b/i;
 
 function normalizeLiveChannelName(str) {
   return String(str || '')
@@ -2375,17 +2386,15 @@ function resolveReceivableTrack(it) {
   if (!it) return null;
   const raw = String(it.channel || it.shortChannel || '').replace(/\s+/g, ' ').trim();
   const rawLower = raw.toLowerCase();
-  if (/kinowelt|silverline|heimatkanal|13th street|syfy|axn|romance tv|universal|history|crime \+ investigation|goldstar|motorvision|beate/i.test(rawLower)) {
-    return null;
-  }
+  if (!rawLower) return null;
   const cleanSky = rawLower.replace(/\s+(hd|uhd)$/i, '').trim();
   if (LIVE_SKY_PREFIXES.some((p) => cleanSky.startsWith(p))) return 'sky';
 
   const norm = normalizeLiveChannelName(raw) || normalizeLiveChannelName(it.shortChannel);
-  if (LIVE_SAT_ALLOW.has(norm) || LIVE_SAT_ALLOW.has(rawLower.replace(/\s+hd$/i, '').trim())) {
+  if (LIVE_SAT_ALLOW.has(norm) || LIVE_SAT_ALLOW.has(cleanSky)) {
     return 'sat';
   }
-  if (LIVE_MAGENTA_ALLOW.has(norm) || LIVE_MAGENTA_ALLOW.has(rawLower.replace(/\s+hd$/i, '').trim())) {
+  if (LIVE_MAGENTA_ALLOW.has(norm) || LIVE_MAGENTA_ALLOW.has(cleanSky)) {
     return 'magenta';
   }
   return null;
@@ -2489,7 +2498,6 @@ function normalizeLiveItemTrack(it) {
 
 function dedupeLiveBroadcasts(list) {
   const seenExact = new Set();
-  const seenSimulcast = new Set();
   const out = [];
   for (const raw of list) {
     const it = normalizeLiveItemTrack(raw);
@@ -2499,11 +2507,6 @@ function dedupeLiveBroadcasts(list) {
     const startKey = String(it.startTime || '').trim();
     const exactKey = `${chKey}|${startKey}|${normTitle}`;
     if (seenExact.has(exactKey)) continue;
-    if (it.track === 'sat' && LIVE_REGIONAL_SIMULCAST_RE.test(it.channel) && normTitle) {
-      const simKey = `regional|${startKey}|${normTitle}`;
-      if (seenSimulcast.has(simKey)) continue;
-      seenSimulcast.add(simKey);
-    }
     seenExact.add(exactKey);
     out.push(it);
   }
@@ -2521,23 +2524,25 @@ function liveItemSortScore(it) {
 function buildLiveNowItems(data, nowDate = new Date()) {
   if (!data) return [];
   const { minutes, ddmm } = berlinNowParts(nowDate);
+  const nowBase = Array.isArray(data.now) ? data.now : [];
   const runningSport = (Array.isArray(data.sport) ? data.sport : [])
     .filter((s) => s && isSportItemToday(s, ddmm) && (s.isLive || isTimeRunningNow(s.startTime, s.endTime, minutes)))
+    .filter((s) => !nowBase.some((n) => n && n.channel === s.channel && normalizeLiveMatchTitle(n.title) === normalizeLiveMatchTitle(s.title)))
     .map((s) => ({ ...s, isLive: true }));
-  const nowBase = Array.isArray(data.now) ? data.now : [];
-  const merged = dedupeLiveBroadcasts([...runningSport, ...nowBase].map((it) => ({ ...it, isLive: true })));
+  const merged = dedupeLiveBroadcasts([...nowBase, ...runningSport].map((it) => ({ ...it, isLive: true })));
   return merged.sort((a, b) => liveItemSortScore(b) - liveItemSortScore(a));
 }
 
 function buildPrimetimeItems(data, nowDate = new Date()) {
   if (!data) return [];
   const { ddmm } = berlinNowParts(nowDate);
-  const eveningSport = (Array.isArray(data.sport) ? data.sport : [])
-    .filter((s) => s && !s.isLive && isSportItemToday(s, ddmm));
   const primeBase = Array.isArray(data.primetime) ? data.primetime : [];
+  const eveningSport = (Array.isArray(data.sport) ? data.sport : [])
+    .filter((s) => s && !s.isLive && isSportItemToday(s, ddmm))
+    .filter((s) => !primeBase.some((p) => p && p.channel === s.channel && p.startTime === s.startTime));
   const inPrimetimeWindow = [...primeBase, ...eveningSport].filter((it) => {
     const startMin = parseHhMmMin(it?.startTime);
-    return startMin !== null && startMin >= 19 * 60 + 45 && startMin <= 21 * 60 + 15;
+    return startMin !== null && startMin >= 19 * 60 + 15 && startMin <= 21 * 60 + 15;
   });
   const merged = dedupeLiveBroadcasts(inPrimetimeWindow.map((it) => ({ ...it, isLive: false })));
   return merged.sort((a, b) => {
@@ -2561,14 +2566,29 @@ function indexLiveTvData(data, nowDate = new Date()) {
 
 function liveStreamButtonLabel(it) {
   if (!it) return 'Livestream ↗';
-  if (it.track === 'sky') return isMacDesktop() ? 'Sky Go öffnen ↗' : 'Sky Guide ↗';
+  if (it.track === 'sky') return isMacDesktop() ? '▶ Sky Go öffnen ↗' : 'Sky Guide ↗';
   if (it.track === 'magenta') return 'MagentaTV Live ↗';
   if (it.mediathekServiceId === 'ard') return 'ARD Livestream ↗';
   if (it.mediathekServiceId === 'zdf') return 'ZDF Livestream ↗';
-  if (it.mediathekServiceId === 'arte') return 'ARTE Livestream ↗';
-  if (it.mediathekServiceId === '3sat') return '3sat Livestream ↗';
-  if (it.mediathekServiceId === 'kika') return 'KiKA Livestream ↗';
   return 'Livestream ↗';
+}
+
+function renderLiveOpenAnchorHtml(it, { secBtn = false, ariaLabel = '' } = {}) {
+  const track = resolveReceivableTrack(it) || it.track || 'sat';
+  const trackCls = track === 'sky' ? ' track-sky' : track === 'magenta' ? ' track-magenta' : '';
+  const cls = secBtn ? 'live-sec-btn' : `live-cta-btn${trackCls}`;
+  if (track === 'sky' && isMacDesktop()) {
+    const label = secBtn ? 'Sky Go ↗' : '▶ Sky Go öffnen ↗';
+    const aria = ariaLabel || 'Sky Go öffnen (kopiert Titel und startet Sky Go App)';
+    return `<a class="${cls}" href="skygo://" data-sky-copy="${escAttr(it.title || it.channel || '')}" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
+  }
+  const fallback = track === 'sky'
+    ? 'https://www.sky.de/tvguide'
+    : (track === 'magenta' ? 'https://web.magentatv.de/tv-guide' : 'https://www.ardmediathek.de/live');
+  const href = it.webUrl || fallback;
+  const label = secBtn ? 'Sender ↗' : liveStreamButtonLabel(it);
+  const aria = ariaLabel || `${it.channel || 'Sender'} öffnen`;
+  return `<a class="${cls}" href="${escAttr(href)}" target="_blank" rel="noopener" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
 }
 
 function isPrimetimeTunableNow(nowDate = new Date()) {
@@ -2602,9 +2622,8 @@ function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunabl
     : '';
 
   const nonMovie = LIVE_NON_TMDB_RE.test(it.title || '');
-  const allowAdd = !!matchedItem || !nonMovie;
-  const allowTrailer = !!it.tmdbId || !nonMovie;
-  const trackCls = track === 'sky' ? ' track-sky' : track === 'magenta' ? ' track-magenta' : '';
+  const allowAdd = !!matchedItem || (track !== 'sky' && !!it.tmdbId && !nonMovie);
+  const allowTrailer = !!it.tmdbId || (track !== 'sky' && !nonMovie);
   const chFallbackTag = track === 'sky' ? 'Sky Stream · HDMI 3' : (track === 'magenta' ? 'MagentaTV HD' : 'Satellit · Free-TV HD');
 
   let actionsHtml = '';
@@ -2613,12 +2632,12 @@ function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunabl
       ? `<button class="live-cta-btn is-primary" type="button" data-live-act="detail" data-live-id="${escAttr(it.id)}">★ Watchlist</button>`
       : (allowAdd
         ? `<button class="live-cta-btn is-primary" type="button" data-live-act="add" data-live-id="${escAttr(it.id)}">+ Merkliste</button>`
-        : `<button class="live-cta-btn${trackCls}" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}">${esc(liveStreamButtonLabel(it))}</button>`);
+        : renderLiveOpenAnchorHtml(it));
     const trailerBtn = allowTrailer
       ? `<button class="live-sec-btn" type="button" data-live-act="trailer" data-live-id="${escAttr(it.id)}" aria-label="Trailer zu ${escAttr(it.title)} ansehen">▶ Trailer</button>`
       : '';
-    const senderBtn = allowAdd
-      ? `<button class="live-sec-btn" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}" title="${escAttr(liveStreamButtonLabel(it))}" aria-label="${escAttr(it.channel + ' öffnen')}">Sender ↗</button>`
+    const senderBtn = (matchedItem || allowAdd)
+      ? renderLiveOpenAnchorHtml(it, { secBtn: true })
       : '';
     actionsHtml = `<div class="live-card-actions">${primaryBtn}${trailerBtn}${senderBtn}</div>`;
   } else {
@@ -2628,7 +2647,7 @@ function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunabl
     const listBtn = allowAdd
       ? `<button class="live-sec-btn${matchedItem ? ' on-list' : ''}" type="button" data-live-act="${matchedItem ? 'detail' : 'add'}" data-live-id="${escAttr(it.id)}" aria-label="${matchedItem ? escAttr(it.title + ' auf Watchlist ansehen') : escAttr(it.title + ' auf Watchlist setzen')}">${matchedItem ? '✓ Liste' : '+'}</button>`
       : '';
-    actionsHtml = `<div class="live-card-actions"><button class="live-cta-btn${trackCls}" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}">${esc(liveStreamButtonLabel(it))}</button>${trailerBtn}${listBtn}</div>`;
+    actionsHtml = `<div class="live-card-actions">${renderLiveOpenAnchorHtml(it)}${trailerBtn}${listBtn}</div>`;
   }
 
   return `
@@ -3351,6 +3370,17 @@ function openMagazineItemDetail(key) {
     ? ` <span class="mag-why-fan">Für Fans von ${esc(it.fan_of)}.</span>`
     : '';
 
+  const primarySvc = primaryServiceForMag(it);
+  const skyMagBtnHtml = primarySvc?.id === 'sky'
+    ? (isMacDesktop()
+      ? `<a class="btn-primary-cta" href="skygo://" data-sky-copy="${escAttr(it.title || '')}" aria-label="Sky Go öffnen (kopiert Titel und startet Sky Go App)">
+          <span aria-hidden="true">▶</span> Sky Go öffnen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+        </a>`
+      : `<a class="btn-primary-cta" href="${escAttr(SERVICE_SEARCH.sky.replace('{q}', encodeURIComponent(it.title || '')))}" target="_blank" rel="noopener">
+          <span aria-hidden="true">▶</span> Bei Sky Go suchen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+        </a>`)
+    : '';
+
   $magazineModalBody.innerHTML = `
     <div class="mag-detail-body" data-mag-key="${escAttr(it.key)}">
       ${hero ? `<div class="mag-detail-hero"><img src="${escAttr(hero)}" alt=""></div>` : ''}
@@ -3363,6 +3393,7 @@ function openMagazineItemDetail(key) {
       ${tagsHtml}
       ${recsHtml}
       <div class="mag-detail-actions">
+        ${skyMagBtnHtml}
         <button class="btn-primary-cta" type="button" data-mag-modal-action="trailer" data-mag-key="${escAttr(it.key)}">
           <span aria-hidden="true">▶</span> Trailer ansehen
         </button>
