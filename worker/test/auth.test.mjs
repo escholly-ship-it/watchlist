@@ -51,6 +51,7 @@ const ROUTES = [
   ['/sync', { method: 'GET' }],
   ['/sync', { method: 'PUT', body: JSON.stringify({ items: [] }), headers: { 'Content-Type': 'application/json' } }],
   ['/magazine', { method: 'GET' }],
+  ['/live-tv', { method: 'GET' }],
   ['/tmdb/search?q=a', { method: 'GET' }],
   ['/tmdb/details?type=movie&id=1', { method: 'GET' }],
   ['/availability', { method: 'POST', body: JSON.stringify({ items: [] }) }],
