@@ -2212,10 +2212,13 @@ function bindEvents() {
       }
       const skyCta = e.target.closest('a[data-sky-copy]');
       if (skyCta) {
+        const liveCh = skyCta.getAttribute('data-sky-live-ch');
         const copyTitle = skyCta.getAttribute('data-sky-copy') || '';
         if (copyTitle) copyTextToClipboard(copyTitle);
         showAutoAddToast(
-          copyTitle ? `„${copyTitle}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…',
+          liveCh
+            ? `Sky Go startet — im App-Menü „TV Guide“ → ${liveCh} wählen`
+            : (copyTitle ? `„${copyTitle}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…'),
           'info',
         );
         return;
@@ -2513,12 +2516,74 @@ function dedupeLiveBroadcasts(list) {
   return out;
 }
 
-function liveItemSortScore(it) {
-  const wl = isLiveItemOnWatchlist(it) ? 1000 : 0;
-  const rating = it.rating ? Math.round(Number(it.rating) * 10) : 0;
-  const img = it.imageUrl || it.posterPath ? 40 : 0;
-  const track = it.track === 'sky' ? 20 : (it.track === 'sat' ? 15 : 10);
-  return wl + img + rating + track;
+const ARD_DAS_ERSTE_LIVE_URL = 'https://www.ardmediathek.de/live/Y3JpZDovL2Rhc2Vyc3RlLmRlL2xpdmUvY2xpcC9hYmNhMDdhMy0zNDc2LTQ4NTEtYjE2Mi1mZGU4ZjY0NmQ0YzQ';
+
+function liveChannelKey(it) {
+  return String(it?.channel || it?.shortChannel || '')
+    .toLowerCase()
+    .replace(/\s+(hd|uhd)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function liveChannelRank(it) {
+  const ch = liveChannelKey(it);
+  if (ch === 'das erste' || ch === 'ard') return 1;
+  if (ch === 'zdf') return 2;
+  if (ch.startsWith('sky sport news')) return 3;
+  if (ch.startsWith('sky sport top event')) return 4;
+  if (ch.startsWith('sky sport bundesliga')) return 5;
+  if (ch.startsWith('sky sport premier league') || ch.startsWith('sky premier l')) return 6;
+  if (ch.startsWith('sky sport f1')) return 7;
+  if (ch === 'rtl') return 8;
+  if (ch === 'sat.1' || ch === 'sat 1' || ch === 'sat1') return 9;
+  if (ch === 'prosieben' || ch === 'pro7') return 10;
+  return 99;
+}
+
+function resolveLiveWebTarget(it) {
+  const ch = liveChannelKey(it);
+  const track = resolveReceivableTrack(it) || it?.track || 'sat';
+  if (ch === 'das erste' || ch === 'ard') {
+    return { track: 'sat', url: ARD_DAS_ERSTE_LIVE_URL, label: '▶ Das Erste Live ↗', badge: 'ARD', fallbackTag: 'ARD Mediathek Live' };
+  }
+  if (ch === 'zdf') {
+    return { track: 'sat', url: 'https://www.zdf.de/live-tv', label: '▶ ZDF Live ↗', badge: 'ZDF', fallbackTag: 'ZDF Live-TV' };
+  }
+  if (ch === 'rtl') {
+    return { track: 'magenta', url: 'https://plus.rtl.de/rtl/live', label: '▶ RTL+ Live ↗', badge: 'RTL+', fallbackTag: 'RTL+ Live' };
+  }
+  if (ch === 'sat.1' || ch === 'sat 1' || ch === 'sat1') {
+    return { track: 'magenta', url: 'https://www.joyn.de/play/live-tv?channel_id=139', label: '▶ Sat.1 Live (Joyn) ↗', badge: 'JOYN', fallbackTag: 'Joyn Live (Free)' };
+  }
+  if (ch === 'prosieben' || ch === 'pro7') {
+    return { track: 'magenta', url: 'https://www.joyn.de/play/live-tv?channel_id=138', label: '▶ ProSieben Live (Joyn) ↗', badge: 'JOYN', fallbackTag: 'Joyn Live (Free)' };
+  }
+  if (track === 'sky') {
+    return {
+      track: 'sky',
+      url: 'https://www.sky.de/tvguide',
+      label: isMacDesktop() ? '▶ Sky Go starten ↗' : 'Sky Guide ↗',
+      badge: 'SKY',
+      fallbackTag: 'Sky Stream · HDMI 3',
+    };
+  }
+  return {
+    track,
+    url: it?.webUrl || (track === 'magenta' ? 'https://plus.rtl.de/rtl/live' : ARD_DAS_ERSTE_LIVE_URL),
+    label: 'Livestream ↗',
+    badge: track === 'magenta' ? 'RTL+' : 'SAT',
+    fallbackTag: track === 'magenta' ? 'RTL+ / Joyn' : 'Satellit · Free-TV HD',
+  };
+}
+
+function compareLiveFixedOrder(a, b) {
+  const rankDiff = liveChannelRank(a) - liveChannelRank(b);
+  if (rankDiff !== 0) return rankDiff;
+  const sa = parseHhMmMin(a?.startTime);
+  const sb = parseHhMmMin(b?.startTime);
+  if (sa !== null && sb !== null && sa !== sb) return sa - sb;
+  return (isLiveItemOnWatchlist(b) ? 1 : 0) - (isLiveItemOnWatchlist(a) ? 1 : 0);
 }
 
 function buildLiveNowItems(data, nowDate = new Date()) {
@@ -2530,7 +2595,7 @@ function buildLiveNowItems(data, nowDate = new Date()) {
     .filter((s) => !nowBase.some((n) => n && n.channel === s.channel && normalizeLiveMatchTitle(n.title) === normalizeLiveMatchTitle(s.title)))
     .map((s) => ({ ...s, isLive: true }));
   const merged = dedupeLiveBroadcasts([...nowBase, ...runningSport].map((it) => ({ ...it, isLive: true })));
-  return merged.sort((a, b) => liveItemSortScore(b) - liveItemSortScore(a));
+  return merged.sort(compareLiveFixedOrder);
 }
 
 function buildPrimetimeItems(data, nowDate = new Date()) {
@@ -2545,15 +2610,7 @@ function buildPrimetimeItems(data, nowDate = new Date()) {
     return startMin !== null && startMin >= 19 * 60 + 15 && startMin <= 21 * 60 + 15;
   });
   const merged = dedupeLiveBroadcasts(inPrimetimeWindow.map((it) => ({ ...it, isLive: false })));
-  return merged.sort((a, b) => {
-    const wlDiff = (isLiveItemOnWatchlist(b) ? 1 : 0) - (isLiveItemOnWatchlist(a) ? 1 : 0);
-    if (wlDiff !== 0) return wlDiff;
-    const startDiff = (parseHhMmMin(a.startTime) || 9999) - (parseHhMmMin(b.startTime) || 9999);
-    const metaDiff = (b.tmdbId || b.imageUrl ? 1 : 0) - (a.tmdbId || a.imageUrl ? 1 : 0);
-    if (metaDiff !== 0) return metaDiff;
-    if (startDiff !== 0) return startDiff;
-    return liveItemSortScore(b) - liveItemSortScore(a);
-  });
+  return merged.sort(compareLiveFixedOrder);
 }
 
 function indexLiveTvData(data, nowDate = new Date()) {
@@ -2565,30 +2622,23 @@ function indexLiveTvData(data, nowDate = new Date()) {
 }
 
 function liveStreamButtonLabel(it) {
-  if (!it) return 'Livestream ↗';
-  if (it.track === 'sky') return isMacDesktop() ? '▶ Sky Go öffnen ↗' : 'Sky Guide ↗';
-  if (it.track === 'magenta') return 'MagentaTV Live ↗';
-  if (it.mediathekServiceId === 'ard') return 'ARD Livestream ↗';
-  if (it.mediathekServiceId === 'zdf') return 'ZDF Livestream ↗';
-  return 'Livestream ↗';
+  return resolveLiveWebTarget(it).label;
 }
 
 function renderLiveOpenAnchorHtml(it, { secBtn = false, ariaLabel = '' } = {}) {
-  const track = resolveReceivableTrack(it) || it.track || 'sat';
+  const target = resolveLiveWebTarget(it);
+  const track = target.track || 'sat';
   const trackCls = track === 'sky' ? ' track-sky' : track === 'magenta' ? ' track-magenta' : '';
   const cls = secBtn ? 'live-sec-btn' : `live-cta-btn${trackCls}`;
   if (track === 'sky' && isMacDesktop()) {
-    const label = secBtn ? 'Sky Go ↗' : '▶ Sky Go öffnen ↗';
-    const aria = ariaLabel || 'Sky Go öffnen (kopiert Titel und startet Sky Go App)';
-    return `<a class="${cls}" href="skygo://" data-sky-copy="${escAttr(it.title || it.channel || '')}" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
+    const liveCh = it?.channel || it?.shortChannel || 'Sky Sport';
+    const label = secBtn ? 'Sky Go ↗' : target.label;
+    const aria = ariaLabel || `Sky Go starten für ${liveCh}`;
+    return `<a class="${cls}" href="skygo://" data-sky-copy="${escAttr(liveCh)}" data-sky-live-ch="${escAttr(liveCh)}" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
   }
-  const fallback = track === 'sky'
-    ? 'https://www.sky.de/tvguide'
-    : (track === 'magenta' ? 'https://web.magentatv.de/tv-guide' : 'https://www.ardmediathek.de/live');
-  const href = it.webUrl || fallback;
-  const label = secBtn ? 'Sender ↗' : liveStreamButtonLabel(it);
-  const aria = ariaLabel || `${it.channel || 'Sender'} öffnen`;
-  return `<a class="${cls}" href="${escAttr(href)}" target="_blank" rel="noopener" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
+  const label = secBtn ? `${target.badge} ↗` : target.label;
+  const aria = ariaLabel || `${it.channel || 'Sender'} direkt im Browser öffnen`;
+  return `<a class="${cls}" href="${escAttr(target.url)}" target="_blank" rel="noopener" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
 }
 
 function isPrimetimeTunableNow(nowDate = new Date()) {
@@ -2599,8 +2649,9 @@ function isPrimetimeTunableNow(nowDate = new Date()) {
 function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunable = false } = {}) {
   const matchedItem = isLiveItemOnWatchlist(it);
   const imgUrl = it.imageUrl || (it.posterPath ? tmdbPoster(it.posterPath, 'w500') : '');
-  const track = it.track || 'sat';
-  const badgeText = esc(it.badge || it.trackLabel || 'SAT');
+  const webTarget = resolveLiveWebTarget(it);
+  const track = webTarget.track || it.track || 'sat';
+  const badgeText = esc(webTarget.badge || it.badge || it.trackLabel || 'SAT');
   const remText = viewMode === 'live' ? remainingMinutesLabel(it, nowMin) : '';
   const statusText = matchedItem
     ? '★ Watchlist'
@@ -2624,7 +2675,7 @@ function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunabl
   const nonMovie = LIVE_NON_TMDB_RE.test(it.title || '');
   const allowAdd = !!matchedItem || (track !== 'sky' && !!it.tmdbId && !nonMovie);
   const allowTrailer = !!it.tmdbId || (track !== 'sky' && !nonMovie);
-  const chFallbackTag = track === 'sky' ? 'Sky Stream · HDMI 3' : (track === 'magenta' ? 'MagentaTV HD' : 'Satellit · Free-TV HD');
+  const chFallbackTag = webTarget.fallbackTag || (track === 'sky' ? 'Sky Stream · HDMI 3' : 'Satellit · Free-TV HD');
 
   let actionsHtml = '';
   if (viewMode === 'primetime' && !primetimeTunable) {
@@ -2693,7 +2744,7 @@ function renderLiveView(nowDate = new Date()) {
             ${viewMode === 'live' ? '<span class="live-pulse-dot" aria-hidden="true"></span>' : ''}
             <h2 class="live-view-title">${viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr'}</h2>
           </div>
-          <span class="live-view-sub">${liveTvFetching ? 'Programm wird geladen…' : 'Aktuelles TV-Programm über Satellit, MagentaTV HD & Sky Stream'}</span>
+          <span class="live-view-sub">${liveTvFetching ? 'Programm wird geladen…' : 'Direkt-Streams: ARD & ZDF · Sky Sport · RTL+ & Joyn'}</span>
         </div>
         <button class="live-view-refresh" type="button" data-live-refresh="1"${liveTvFetching ? ' disabled' : ''}>↻ Aktualisieren</button>
       </div>
@@ -2715,15 +2766,15 @@ function renderLiveView(nowDate = new Date()) {
 
   const headingTitle = viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr';
   const baseSub = viewMode === 'live'
-    ? 'Laufende Sendungen · Satellit HD, MagentaTV HD & Sky Stream'
-    : (primetimeTunable ? 'Abendprogramm läuft — direkt einschalten oder vormerken' : 'Abendprogramm — Trailer ansehen oder direkt auf die Merkliste setzen');
+    ? 'Laufende Sendungen · ARD & ZDF · Sky Sport · RTL+ & Joyn'
+    : (primetimeTunable ? 'Abendprogramm läuft — direkt einschalten oder vormerken' : 'Abendprogramm — Direkt-Streams & Highlights ab 20:15 Uhr');
   const subText = matchCount > 0 ? `${matchCount}× auf deiner Watchlist · ${baseSub}` : baseSub;
 
   const filterChips = [
     { id: 'all', label: `Alle (${baseList.length})` },
-    { id: 'sat', label: `Satellit HD (${satCnt})` },
-    { id: 'magenta', label: `Magenta HD (${magCnt})` },
-    { id: 'sky', label: `Sky Stream (${skyCnt})` },
+    { id: 'sat', label: `ARD & ZDF (${satCnt})` },
+    { id: 'sky', label: `Sky Sport (${skyCnt})` },
+    { id: 'magenta', label: `RTL+ & Joyn (${magCnt})` },
   ].map((c) => {
     const isAct = trackFilter === c.id;
     return `<button class="filter-chip${isAct ? ' active' : ''}" type="button" data-live-track="${c.id}" aria-pressed="${String(isAct)}">${esc(c.label)}</button>`;
@@ -2750,13 +2801,13 @@ function renderLiveView(nowDate = new Date()) {
 
 function handleLivePrimaryAction(item) {
   if (!item) return;
-  const track = resolveReceivableTrack(item) || item.track;
-  if (track === 'sky') {
+  const target = resolveLiveWebTarget(item);
+  if (target.track === 'sky') {
     if (isMacDesktop()) {
-      const title = item.title || '';
-      if (title) copyTextToClipboard(title);
+      const ch = item.channel || item.shortChannel || item.title || '';
+      if (ch) copyTextToClipboard(ch);
       showAutoAddToast(
-        title ? `„${title}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…',
+        ch ? `Sky Go startet — im App-Menü „TV Guide“ → ${ch} wählen` : 'Sky Go wird geöffnet…',
         'info',
       );
       try {
@@ -2764,13 +2815,10 @@ function handleLivePrimaryAction(item) {
       } catch (_) {}
       return;
     }
-    window.open(item.webUrl || 'https://www.sky.de/tvguide', '_blank', 'noopener,noreferrer');
+    window.open(target.url || 'https://www.sky.de/tvguide', '_blank', 'noopener,noreferrer');
     return;
   }
-  const fallback = track === 'magenta'
-    ? 'https://web.magentatv.de/tv-guide'
-    : 'https://www.ardmediathek.de/live';
-  window.open(item.webUrl || fallback, '_blank', 'noopener,noreferrer');
+  window.open(target.url || item.webUrl, '_blank', 'noopener,noreferrer');
 }
 
 async function handleLiveAddToWatchlist(item) {

@@ -43,8 +43,8 @@ function berlinWindowHhMm() {
   }).formatToParts(now);
   const h = Number(parts.find((p) => p.type === 'hour')?.value || 12) % 24;
   const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
-  const startMin = h * 60 + m - 10;
-  const endMin = h * 60 + m + 45;
+  const startMin = h * 60 + m - 5;
+  const endMin = h * 60 + m + 10;
   const fmt = (tot) => {
     const wrapped = ((tot % 1440) + 1440) % 1440;
     return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
