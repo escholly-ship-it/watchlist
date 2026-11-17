@@ -59,6 +59,15 @@ const SAMPLE_2015_XML = `<?xml version="1.0" encoding="UTF-8"?>
     <description>Musikfilm mit Hugh Jackman.</description>
     <enclosure url="https://img.tvspielfilm.de/68/53/59/sky.jpeg?im=Resize,width=159" type="image/jpeg"/>
   </item>
+  <item>
+    <title>17:00 | Kinowelt TV | Malcom X</title>
+    <description>Nicht abonnierter Drittanbieter am Nachmittag.</description>
+    <enclosure url="https://img.tvspielfilm.de/68/53/59/kw.jpeg?im=Resize,width=159" type="image/jpeg"/>
+  </item>
+  <item>
+    <title>22:20 | Das Erste | Spaetfilm</title>
+    <description>Nach 21:15.</description>
+  </item>
 </channel></rss>`;
 
 const SAMPLE_SKY_BULI_HTML = `<table>
@@ -138,6 +147,8 @@ test('GET /live-tv ordnet 3 Spuren korrekt zu, skaliert Bilder und nutzt KV-Cach
   assert.ok(bl1);
   assert.equal(bl1.track, 'sky');
   assert.equal(bl1.startTime, '20:30');
+  assert.equal(allItems.some((x) => /kinowelt/i.test(x.channel)), false);
+  assert.equal(body1.primetime.some((x) => x.title === 'Malcom X' || x.title === 'Spaetfilm'), false);
   assert.ok(kv.has('live_tv:v1'));
 
   const callsAfterFirst = fetched.length;

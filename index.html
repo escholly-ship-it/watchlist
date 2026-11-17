@@ -89,17 +89,26 @@
       <button class="sync-banner-btn" id="syncBannerBtn" type="button"></button>
     </div>
 
-    <!-- Navigation & Kompakt-Kopf (Magazin v3: Direkt-Umschalter Meine Liste | Für dich) -->
+    <!-- Navigation & Kompakt-Kopf (V1: 4 direkte Rubrik-Tabs: Liste | Für dich | Live | 20:15) -->
     <div class="pill-row" id="pillRow">
       <div class="view-switcher" id="viewSwitcher" role="tablist" aria-label="Ansicht wählen">
         <button class="view-tab active" id="tabList" role="tab" aria-selected="true" data-view="list" type="button">
-          <span>Meine Liste</span>
+          <span class="tab-lbl-desktop">Meine Liste</span><span class="tab-lbl-mobile">Liste</span>
           <span class="view-tab-badge hidden" id="tabListCount"></span>
         </button>
         <button class="view-tab" id="tabDiscover" role="tab" aria-selected="false" data-view="discover" type="button">
           <span class="view-tab-spark" aria-hidden="true">✦</span>
           <span>Für dich</span>
           <span class="view-tab-badge accent hidden" id="tabDiscoverCount"></span>
+        </button>
+        <button class="view-tab" id="tabLiveNow" role="tab" aria-selected="false" data-view="live" type="button">
+          <span class="live-tab-dot" aria-hidden="true"></span>
+          <span>Live</span>
+          <span class="view-tab-badge hidden" id="tabLiveCount"></span>
+        </button>
+        <button class="view-tab" id="tabLivePrime" role="tab" aria-selected="false" data-view="primetime" type="button">
+          <span>20:15</span>
+          <span class="view-tab-badge hidden" id="tabPrimeCount"></span>
         </button>
       </div>
       <button class="pill" id="pillFilter" aria-haspopup="dialog" type="button">
@@ -115,20 +124,8 @@
     <!-- Für-Dich Streaming-Hub (Magazin v3) -->
     <section class="discover-view hidden" id="discoverView" aria-label="Persönliche Empfehlungen"></section>
 
-    <!-- Live-TV & 20:15 Spotlight-Band (V3 · Wohnzimmer-Command-Rail) -->
-    <section class="live-band-section hidden" id="liveBandSection" aria-label="Heute Live und 20:15 im TV">
-      <div class="live-band-head">
-        <div class="live-band-title-wrap">
-          <div class="live-band-heading-row">
-            <span class="live-pulse-dot" aria-hidden="true"></span>
-            <h2 class="live-band-title">Heute Live &amp; 20:15 im TV</h2>
-          </div>
-          <span class="live-band-meta" id="liveBandMeta">Sat · Magenta HD · Sky</span>
-        </div>
-        <button class="live-band-all-btn" id="btnOpenLiveSheet" type="button">Alle Sender <span aria-hidden="true">→</span></button>
-      </div>
-      <div class="live-band-track" id="liveBandTrack" role="list"></div>
-    </section>
+    <!-- Live-TV & 20:15 Ansicht (V1 · Eigene Rubrik-Tabs statt Misch-Schiene) -->
+    <section class="live-view hidden" id="liveView" aria-label="Live-TV und 20:15 Programm"></section>
 
     <!-- Shortlist -->
     <section class="shortlist-section hidden" id="shortlistSection">
@@ -289,30 +286,6 @@
         </div>
         <div class="trailer-stage" id="trailerStage"></div>
         <div class="trailer-footer" id="trailerFooter"></div>
-      </div>
-    </div>
-
-    <!-- Live-TV Sheet (V3 · Alle Sender nach Empfangsweg) -->
-    <div class="modal-overlay sheet" id="liveTvModal" role="dialog" aria-modal="true" aria-labelledby="liveTvModalTitle">
-      <div class="modal live-sheet">
-        <div class="modal-header">
-          <div class="live-sheet-title-group">
-            <span class="live-pulse-dot" aria-hidden="true"></span>
-            <h2 id="liveTvModalTitle">Heute Live &amp; 20:15 im TV</h2>
-          </div>
-          <button class="modal-close" id="liveTvClose" aria-label="Schließen">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <div class="live-sheet-filters" id="liveSheetFilters" role="tablist" aria-label="TV-Filter">
-          <button class="filter-chip active" type="button" data-live-filter="all" role="tab" aria-selected="true">Alle</button>
-          <button class="filter-chip" type="button" data-live-filter="now" role="tab" aria-selected="false">Jetzt live</button>
-          <button class="filter-chip" type="button" data-live-filter="primetime" role="tab" aria-selected="false">20:15 Uhr</button>
-          <button class="filter-chip" type="button" data-live-filter="sat" role="tab" aria-selected="false">Satellit</button>
-          <button class="filter-chip" type="button" data-live-filter="magenta" role="tab" aria-selected="false">Magenta HD</button>
-          <button class="filter-chip" type="button" data-live-filter="sky" role="tab" aria-selected="false">Sky &amp; Sport</button>
-        </div>
-        <div class="live-sheet-body" id="liveTvSheetBody"></div>
       </div>
     </div>
 

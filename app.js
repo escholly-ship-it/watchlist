@@ -269,16 +269,10 @@ const $app = document.getElementById('app');
 const $watchlist = document.getElementById('watchlist');
 const $shortlistSection = document.getElementById('shortlistSection');
 const $shortlistTrack = document.getElementById('shortlistTrack');
-const $liveBandSection = document.getElementById('liveBandSection');
-const $liveBandTrack = document.getElementById('liveBandTrack');
-const $liveBandMeta = document.getElementById('liveBandMeta');
-const $liveTvModal = document.getElementById('liveTvModal');
-const $liveTvSheetBody = document.getElementById('liveTvSheetBody');
-const $liveSheetFilters = document.getElementById('liveSheetFilters');
 const $emptyState = document.getElementById('emptyState');
 const $loadingState = document.getElementById('loadingState');
 const $filterBar = document.getElementById('filterBar');
-// WL-23 + Magazin v3 Kompakt-Kopf & View-Switcher
+// WL-23 + V1 4-Tab-Navigation (Meine Liste | Für dich | Live | 20:15)
 const $pillFilter = document.getElementById('pillFilter');
 const $pillFilterValue = document.getElementById('pillFilterValue');
 const $pillWoche = document.getElementById('pillWoche');
@@ -286,9 +280,14 @@ const $pillWocheLabel = document.getElementById('pillWocheLabel');
 const $pillWocheValue = document.getElementById('pillWocheValue');
 const $tabList = document.getElementById('tabList');
 const $tabDiscover = document.getElementById('tabDiscover');
+const $tabLiveNow = document.getElementById('tabLiveNow');
+const $tabLivePrime = document.getElementById('tabLivePrime');
 const $tabListCount = document.getElementById('tabListCount');
 const $tabDiscoverCount = document.getElementById('tabDiscoverCount');
+const $tabLiveCount = document.getElementById('tabLiveCount');
+const $tabPrimeCount = document.getElementById('tabPrimeCount');
 const $discoverView = document.getElementById('discoverView');
+const $liveView = document.getElementById('liveView');
 const $filterModal = document.getElementById('filterModal');
 const $magazineModal = document.getElementById('magazineModal');
 const $magazineModalBody = document.getElementById('magazineModalBody');
@@ -356,7 +355,7 @@ function closeOverlay(overlayEl, restoreFocus = true){
 }
 
 function setBackgroundInert(on){
-  document.querySelectorAll('#app > header, #app > #pillRow, #app > #discoverView, #app > #liveBandSection, #app > #shortlistSection, #app > #watchlist, #app > #seenSection').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
+  document.querySelectorAll('#app > header, #app > #pillRow, #app > #discoverView, #app > #liveView, #app > #shortlistSection, #app > #watchlist, #app > #seenSection').forEach(el => { if(on) el.setAttribute('inert',''); else el.removeAttribute('inert'); });
 }
 
 function focusables(root){
@@ -387,7 +386,7 @@ async function init() {
   const liveTvReady = fetchLiveTv();
   // Sync from server (non-blocking)
   const pulled = await pullFromServer();
-  if (typeof renderLiveBand === 'function') renderLiveBand();
+  if (typeof updateViewCounts === 'function') updateViewCounts();
   // WL-28: Neupruefung nur nach erfolgreichem Pull — sonst wuerde der Push der
   // Neupruefung den Server-Stand mit der alten lokalen Liste ueberschreiben.
   if (pulled) await resolveVorgemerkt();
@@ -1474,7 +1473,7 @@ function renderWatchlist() {
   updateFilterPill();
   updateViewCounts();
   if (activeMainView === 'discover') refreshDiscoverButtonStates();
-  if (typeof renderLiveBand === 'function') renderLiveBand();
+  if (activeMainView === 'live' || activeMainView === 'primetime') renderLiveView();
 }
 
 // WL-23: Gesehen-Sektion — Leiste immer (ab 1 Titel), Raster nur aufgeklappt.
@@ -2174,6 +2173,8 @@ function bindEvents() {
   $pillWoche.addEventListener('click', () => switchMainView('discover'));
   if ($tabList) $tabList.addEventListener('click', () => switchMainView('list'));
   if ($tabDiscover) $tabDiscover.addEventListener('click', () => switchMainView('discover'));
+  if ($tabLiveNow) $tabLiveNow.addEventListener('click', () => switchMainView('live'));
+  if ($tabLivePrime) $tabLivePrime.addEventListener('click', () => switchMainView('primetime'));
   document.getElementById('magazineModalClose').addEventListener('click', () => closeMagazineModal());
   $magazineModal.addEventListener('click', (e) => {
     if (e.target === $magazineModal) closeMagazineModal();
@@ -2186,35 +2187,22 @@ function bindEvents() {
     });
   }
 
-  // V3 Live-TV & 20:15 Band + Sheet
-  const $btnOpenLiveSheet = document.getElementById('btnOpenLiveSheet');
-  if ($btnOpenLiveSheet) $btnOpenLiveSheet.addEventListener('click', openLiveTvModal);
-  const $liveTvClose = document.getElementById('liveTvClose');
-  if ($liveTvClose) $liveTvClose.addEventListener('click', closeLiveTvModal);
-  if ($liveTvModal) {
-    $liveTvModal.addEventListener('click', (e) => {
-      if (e.target === $liveTvModal) { closeLiveTvModal(); return; }
+  // V1 Live & 20:15 delegierte Events
+  if ($liveView) {
+    $liveView.addEventListener('click', (e) => {
+      const refreshBtn = e.target.closest('[data-live-refresh]');
+      if (refreshBtn) {
+        fetchLiveTv({ force: true });
+        return;
+      }
+      const trackChip = e.target.closest('[data-live-track]');
+      if (trackChip) {
+        activeLiveTrackFilter = trackChip.dataset.liveTrack || 'all';
+        renderLiveView();
+        return;
+      }
       const actBtn = e.target.closest('[data-live-act][data-live-id]');
       if (actBtn) handleLiveCardEvent(actBtn.dataset.liveAct, actBtn.dataset.liveId);
-    });
-  }
-  if ($liveBandTrack) {
-    $liveBandTrack.addEventListener('click', (e) => {
-      const actBtn = e.target.closest('[data-live-act][data-live-id]');
-      if (actBtn) handleLiveCardEvent(actBtn.dataset.liveAct, actBtn.dataset.liveId);
-    });
-  }
-  if ($liveSheetFilters) {
-    $liveSheetFilters.addEventListener('click', (e) => {
-      const chip = e.target.closest('[data-live-filter]');
-      if (!chip) return;
-      activeLiveSheetFilter = chip.dataset.liveFilter || 'all';
-      $liveSheetFilters.querySelectorAll('[data-live-filter]').forEach((c) => {
-        const active = c === chip;
-        c.classList.toggle('active', active);
-        c.setAttribute('aria-selected', String(active));
-      });
-      renderLiveTvSheet();
     });
   }
 
@@ -2337,7 +2325,6 @@ function bindEvents() {
     if (e.key === 'Escape') {
       const $reader = document.getElementById('magazineReader');
       if ($trailerModal && $trailerModal.classList.contains('open')) closeTrailerModal();
-      else if ($liveTvModal && $liveTvModal.classList.contains('open')) closeLiveTvModal();
       else if ($reader && !$reader.classList.contains('hidden')) closeMagazineReader();
       else if ($filterModal.classList.contains('open')) closeFilterSheet();
       else if ($magazineModal.classList.contains('open')) closeMagazineModal();
@@ -2349,12 +2336,125 @@ function bindEvents() {
   });
 }
 
-// ---- V3 Live-TV & 20:15 Spotlight (Satellit · Magenta HD · Sky) ----
+// ---- V1 Live-TV & 20:15 Programm (Getrennte Tabs: Live | 20:15 · Satellit | Magenta HD | Sky) ----
 const LIVE_TV_URL = `${WORKER_BASE}/live-tv`;
 let liveTvData = null;
-let activeLiveSheetFilter = 'all';
+let liveTvFetching = false;
+let activeLiveTrackFilter = 'all'; // 'all' | 'sat' | 'magenta' | 'sky'
 const liveTvIndex = new Map();
 const LIVE_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|doppelpass|sportstudio|nachrichten|teletext|börse|boerse)\b/i;
+
+const LIVE_SAT_ALLOW = new Set([
+  'das erste', 'ard', 'zdf', 'arte', '3sat', 'zdfneo', 'zdf info', 'zdfinfo', 'one', 'kika',
+  'wdr', 'wdr fernsehen', 'ndr', 'ndr fernsehen', 'br', 'br fernsehen', 'swr', 'swr sr', 'swr fernsehen',
+  'mdr', 'mdr fernsehen', 'hr', 'hr fernsehen', 'rbb', 'rbb fernsehen', 'phoenix', 'tagesschau24',
+  'ard alpha', 'servustv', 'servus tv', 'df1', 'eurosport 1', 'eurosport',
+]);
+const LIVE_MAGENTA_ALLOW = new Set([
+  'rtl', 'prosieben', 'pro7', 'sat 1', 'sat1', 'vox', 'kabel eins', 'kabel 1', 'nitro', 'rtl nitro',
+  'rtl zwei', 'rtlzwei', 'rtl2', 'rtl ii', 'prosieben maxx', 'pro7 maxx', 'sixx', 'sat 1 gold',
+  'super rtl', 'toggo plus', 'sport1', 'dmax', 'tele 5', 'disney channel', 'comedy central',
+  'welt', 'ntv', 'n tv', 'voxup', 'rtlup',
+]);
+const LIVE_SKY_PREFIXES = [
+  'sky cinema', 'sky atlantic', 'sky showcase', 'sky one', 'sky replay',
+  'sky krimi', 'sky crime', 'sky documentaries', 'sky nature', 'sky sport',
+  'warner tv',
+];
+const LIVE_REGIONAL_SIMULCAST_RE = /^(wdr|ndr|br|swr|mdr|hr|rbb)\b/i;
+
+function normalizeLiveChannelName(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/\b(hd|uhd|tv)\b/g, ' ')
+    .replace(/[^a-z0-9äöüß]+/gi, ' ')
+    .trim();
+}
+
+function resolveReceivableTrack(it) {
+  if (!it) return null;
+  const raw = String(it.channel || it.shortChannel || '').replace(/\s+/g, ' ').trim();
+  const rawLower = raw.toLowerCase();
+  if (/kinowelt|silverline|heimatkanal|13th street|syfy|axn|romance tv|universal|history|crime \+ investigation|goldstar|motorvision|beate/i.test(rawLower)) {
+    return null;
+  }
+  const cleanSky = rawLower.replace(/\s+(hd|uhd)$/i, '').trim();
+  if (LIVE_SKY_PREFIXES.some((p) => cleanSky.startsWith(p))) return 'sky';
+
+  const norm = normalizeLiveChannelName(raw) || normalizeLiveChannelName(it.shortChannel);
+  if (LIVE_SAT_ALLOW.has(norm) || LIVE_SAT_ALLOW.has(rawLower.replace(/\s+hd$/i, '').trim())) {
+    return 'sat';
+  }
+  if (LIVE_MAGENTA_ALLOW.has(norm) || LIVE_MAGENTA_ALLOW.has(rawLower.replace(/\s+hd$/i, '').trim())) {
+    return 'magenta';
+  }
+  return null;
+}
+
+function isReceivableLiveItem(it) {
+  return resolveReceivableTrack(it) !== null;
+}
+
+function parseHhMmMin(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+  if (!m) return null;
+  return (Number(m[1]) % 24) * 60 + Number(m[2]);
+}
+
+function berlinNowParts(nowDate = new Date()) {
+  try {
+    const d = nowDate instanceof Date ? nowDate : new Date(nowDate);
+    const parts = new Intl.DateTimeFormat('de-DE', {
+      timeZone: 'Europe/Berlin',
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const h = Number(parts.find((p) => p.type === 'hour')?.value || 0);
+    const min = Number(parts.find((p) => p.type === 'minute')?.value || 0);
+    const day = parts.find((p) => p.type === 'day')?.value || '01';
+    const month = parts.find((p) => p.type === 'month')?.value || '01';
+    return { minutes: (h % 24) * 60 + min, ddmm: `${day}.${month}.` };
+  } catch (_) {
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return { minutes: d.getHours() * 60 + d.getMinutes(), ddmm: `${dd}.${mm}.` };
+  }
+}
+
+function isSportItemToday(it, todayDdMm) {
+  const desc = String(it?.description || '').trim();
+  const m = /^(\d{2}\.\d{2}\.)/.exec(desc);
+  if (!m) return true;
+  return m[1] === todayDdMm;
+}
+
+function isTimeRunningNow(startTime, endTime, nowMin) {
+  const start = parseHhMmMin(startTime);
+  if (start === null) return false;
+  let end = parseHhMmMin(endTime);
+  if (end === null) end = start + 110;
+  let cur = nowMin;
+  if (end <= start) end += 1440;
+  if (cur < start && cur + 1440 <= end + 30) cur += 1440;
+  return cur >= start && cur < end;
+}
+
+function remainingMinutesLabel(it, nowMin) {
+  if (!it || !it.endTime) return '';
+  const start = parseHhMmMin(it.startTime);
+  let end = parseHhMmMin(it.endTime);
+  if (start === null || end === null) return '';
+  let cur = nowMin;
+  if (end <= start) end += 1440;
+  if (cur < start && cur + 1440 <= end + 30) cur += 1440;
+  const rem = end - cur;
+  if (rem > 0 && rem < 240) return `noch ${rem} Min.`;
+  return '';
+}
 
 function normalizeLiveMatchTitle(str) {
   return String(str || '')
@@ -2378,159 +2478,261 @@ function isLiveItemOnWatchlist(liveItem) {
   return items.find((x) => !x.watched && normalizeLiveMatchTitle(x.title) === target) || null;
 }
 
-function indexLiveTvData(data) {
-  liveTvIndex.clear();
-  if (!data) return;
-  [data.spotlight, data.now, data.primetime, data.sport].forEach((arr) => {
-    if (!Array.isArray(arr)) return;
-    arr.forEach((it) => {
-      if (it && it.id) liveTvIndex.set(it.id, it);
-    });
+function normalizeLiveItemTrack(it) {
+  const resolved = resolveReceivableTrack(it);
+  if (!resolved) return null;
+  if (it.track === resolved) return it;
+  const trackLabel = resolved === 'sky' ? 'SKY · HDMI 3' : (resolved === 'magenta' ? 'MAGENTA HD' : 'SAT HD');
+  const badge = resolved === 'sky' ? 'SKY' : (resolved === 'magenta' ? 'MAGENTA' : 'SAT');
+  return { ...it, track: resolved, trackLabel, badge };
+}
+
+function dedupeLiveBroadcasts(list) {
+  const seenExact = new Set();
+  const seenSimulcast = new Set();
+  const out = [];
+  for (const raw of list) {
+    const it = normalizeLiveItemTrack(raw);
+    if (!it || !it.title || !it.channel) continue;
+    const chKey = String(it.channel).toLowerCase().trim();
+    const normTitle = normalizeLiveMatchTitle(it.title);
+    const startKey = String(it.startTime || '').trim();
+    const exactKey = `${chKey}|${startKey}|${normTitle}`;
+    if (seenExact.has(exactKey)) continue;
+    if (it.track === 'sat' && LIVE_REGIONAL_SIMULCAST_RE.test(it.channel) && normTitle) {
+      const simKey = `regional|${startKey}|${normTitle}`;
+      if (seenSimulcast.has(simKey)) continue;
+      seenSimulcast.add(simKey);
+    }
+    seenExact.add(exactKey);
+    out.push(it);
+  }
+  return out;
+}
+
+function liveItemSortScore(it) {
+  const wl = isLiveItemOnWatchlist(it) ? 1000 : 0;
+  const rating = it.rating ? Math.round(Number(it.rating) * 10) : 0;
+  const img = it.imageUrl || it.posterPath ? 40 : 0;
+  const track = it.track === 'sky' ? 20 : (it.track === 'sat' ? 15 : 10);
+  return wl + img + rating + track;
+}
+
+function buildLiveNowItems(data, nowDate = new Date()) {
+  if (!data) return [];
+  const { minutes, ddmm } = berlinNowParts(nowDate);
+  const runningSport = (Array.isArray(data.sport) ? data.sport : [])
+    .filter((s) => s && isSportItemToday(s, ddmm) && (s.isLive || isTimeRunningNow(s.startTime, s.endTime, minutes)))
+    .map((s) => ({ ...s, isLive: true }));
+  const nowBase = Array.isArray(data.now) ? data.now : [];
+  const merged = dedupeLiveBroadcasts([...runningSport, ...nowBase].map((it) => ({ ...it, isLive: true })));
+  return merged.sort((a, b) => liveItemSortScore(b) - liveItemSortScore(a));
+}
+
+function buildPrimetimeItems(data, nowDate = new Date()) {
+  if (!data) return [];
+  const { ddmm } = berlinNowParts(nowDate);
+  const eveningSport = (Array.isArray(data.sport) ? data.sport : [])
+    .filter((s) => s && !s.isLive && isSportItemToday(s, ddmm));
+  const primeBase = Array.isArray(data.primetime) ? data.primetime : [];
+  const inPrimetimeWindow = [...primeBase, ...eveningSport].filter((it) => {
+    const startMin = parseHhMmMin(it?.startTime);
+    return startMin !== null && startMin >= 19 * 60 + 45 && startMin <= 21 * 60 + 15;
+  });
+  const merged = dedupeLiveBroadcasts(inPrimetimeWindow.map((it) => ({ ...it, isLive: false })));
+  return merged.sort((a, b) => {
+    const wlDiff = (isLiveItemOnWatchlist(b) ? 1 : 0) - (isLiveItemOnWatchlist(a) ? 1 : 0);
+    if (wlDiff !== 0) return wlDiff;
+    const startDiff = (parseHhMmMin(a.startTime) || 9999) - (parseHhMmMin(b.startTime) || 9999);
+    const metaDiff = (b.tmdbId || b.imageUrl ? 1 : 0) - (a.tmdbId || a.imageUrl ? 1 : 0);
+    if (metaDiff !== 0) return metaDiff;
+    if (startDiff !== 0) return startDiff;
+    return liveItemSortScore(b) - liveItemSortScore(a);
   });
 }
 
-function liveCtaLabel(it) {
-  if (!it) return 'Live ↗';
-  if (it.track === 'sky') return isMacDesktop() ? 'Sky Go ↗' : 'Sky Programm ↗';
-  if (it.track === 'magenta') return 'MagentaTV ↗';
+function indexLiveTvData(data, nowDate = new Date()) {
+  liveTvIndex.clear();
+  if (!data) return;
+  [...buildLiveNowItems(data, nowDate), ...buildPrimetimeItems(data, nowDate)].forEach((it) => {
+    if (it && it.id) liveTvIndex.set(it.id, it);
+  });
+}
+
+function liveStreamButtonLabel(it) {
+  if (!it) return 'Livestream ↗';
+  if (it.track === 'sky') return isMacDesktop() ? 'Sky Go öffnen ↗' : 'Sky Guide ↗';
+  if (it.track === 'magenta') return 'MagentaTV Live ↗';
+  if (it.mediathekServiceId === 'ard') return 'ARD Livestream ↗';
+  if (it.mediathekServiceId === 'zdf') return 'ZDF Livestream ↗';
+  if (it.mediathekServiceId === 'arte') return 'ARTE Livestream ↗';
+  if (it.mediathekServiceId === '3sat') return '3sat Livestream ↗';
+  if (it.mediathekServiceId === 'kika') return 'KiKA Livestream ↗';
   return 'Livestream ↗';
 }
 
-function renderLiveActionRow(it, matchedItem) {
-  const trackCls = it.track === 'sky' ? ' track-sky' : it.track === 'magenta' ? ' track-magenta' : '';
-  const allowAdd = matchedItem || !LIVE_NON_TMDB_RE.test(it.title || '');
-  const addBtn = allowAdd
-    ? `<button class="live-add-btn${matchedItem ? ' on-list' : ''}" type="button" data-live-act="${matchedItem ? 'detail' : 'add'}" data-live-id="${escAttr(it.id)}" title="${matchedItem ? 'Auf deiner Watchlist ansehen' : 'Auf Watchlist setzen'}" aria-label="${matchedItem ? escAttr(it.title + ' auf Watchlist ansehen') : escAttr(it.title + ' auf Watchlist setzen')}">${matchedItem ? '✓ Liste' : '+'}</button>`
-    : '';
-  return `<div class="live-band-actions"><button class="live-cta-btn${trackCls}" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}">${esc(liveCtaLabel(it))}</button>${addBtn}</div>`;
+function isPrimetimeTunableNow(nowDate = new Date()) {
+  const { minutes } = berlinNowParts(nowDate);
+  return minutes >= 20 * 60 + 10 || minutes < 60;
 }
 
-function renderLiveBandCardHtml(it) {
+function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunable = false } = {}) {
   const matchedItem = isLiveItemOnWatchlist(it);
   const imgUrl = it.imageUrl || (it.posterPath ? tmdbPoster(it.posterPath, 'w500') : '');
+  const track = it.track || 'sat';
   const badgeText = esc(it.badge || it.trackLabel || 'SAT');
-  const timeText = it.isLive ? '● LIVE' : (it.startTime ? `${it.startTime} Uhr` : 'HEUTE');
-  const rightPill = matchedItem
-    ? '<span class="live-track-pill match">★ Watchlist</span>'
-    : `<span class="live-track-pill ${it.isLive ? 'live' : 'time'}">${esc(timeText)}</span>`;
-  const subParts = [];
-  if (it.startTime) subParts.push(it.isLive ? `seit ${it.startTime} Uhr` : `${it.startTime} Uhr`);
-  if (it.rating) subParts.push(`★ ${Number(it.rating).toFixed(1)}`);
-  else if (it.trackLabel) subParts.push(it.trackLabel);
-  const progBar = it.isLive && it.progressPct > 0
+  const remText = viewMode === 'live' ? remainingMinutesLabel(it, nowMin) : '';
+  const statusText = matchedItem
+    ? '★ Watchlist'
+    : (viewMode === 'live' ? (remText ? `● LIVE · ${remText}` : '● LIVE') : (it.startTime ? `${it.startTime} Uhr` : '20:15 Uhr'));
+  const statusCls = matchedItem ? 'match' : (viewMode === 'live' ? 'live' : 'time');
+
+  const metaParts = [];
+  if (viewMode === 'live') {
+    if (it.startTime) metaParts.push(`seit ${it.startTime} Uhr`);
+    if (remText) metaParts.push(remText);
+  } else {
+    if (it.startTime) metaParts.push(`Heute ${it.startTime} Uhr`);
+  }
+  metaParts.push(it.channel || it.shortChannel || '');
+  if (it.rating) metaParts.push(`★ ${Number(it.rating).toFixed(1)}`);
+
+  const progBar = viewMode === 'live' && it.progressPct > 0
     ? `<div class="live-progress-track"><div class="live-progress-fill" style="width:${Math.min(100, Math.max(4, Number(it.progressPct)))}%"></div></div>`
     : '';
+
+  const nonMovie = LIVE_NON_TMDB_RE.test(it.title || '');
+  const allowAdd = !!matchedItem || !nonMovie;
+  const allowTrailer = !!it.tmdbId || !nonMovie;
+  const trackCls = track === 'sky' ? ' track-sky' : track === 'magenta' ? ' track-magenta' : '';
+  const chFallbackTag = track === 'sky' ? 'Sky Stream · HDMI 3' : (track === 'magenta' ? 'MagentaTV HD' : 'Satellit · Free-TV HD');
+
+  let actionsHtml = '';
+  if (viewMode === 'primetime' && !primetimeTunable) {
+    const primaryBtn = matchedItem
+      ? `<button class="live-cta-btn is-primary" type="button" data-live-act="detail" data-live-id="${escAttr(it.id)}">★ Watchlist</button>`
+      : (allowAdd
+        ? `<button class="live-cta-btn is-primary" type="button" data-live-act="add" data-live-id="${escAttr(it.id)}">+ Merkliste</button>`
+        : `<button class="live-cta-btn${trackCls}" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}">${esc(liveStreamButtonLabel(it))}</button>`);
+    const trailerBtn = allowTrailer
+      ? `<button class="live-sec-btn" type="button" data-live-act="trailer" data-live-id="${escAttr(it.id)}" aria-label="Trailer zu ${escAttr(it.title)} ansehen">▶ Trailer</button>`
+      : '';
+    const senderBtn = allowAdd
+      ? `<button class="live-sec-btn" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}" title="${escAttr(liveStreamButtonLabel(it))}" aria-label="${escAttr(it.channel + ' öffnen')}">Sender ↗</button>`
+      : '';
+    actionsHtml = `<div class="live-card-actions">${primaryBtn}${trailerBtn}${senderBtn}</div>`;
+  } else {
+    const trailerBtn = allowTrailer
+      ? `<button class="live-sec-btn" type="button" data-live-act="trailer" data-live-id="${escAttr(it.id)}" aria-label="Trailer zu ${escAttr(it.title)} ansehen">▶ Trailer</button>`
+      : '';
+    const listBtn = allowAdd
+      ? `<button class="live-sec-btn${matchedItem ? ' on-list' : ''}" type="button" data-live-act="${matchedItem ? 'detail' : 'add'}" data-live-id="${escAttr(it.id)}" aria-label="${matchedItem ? escAttr(it.title + ' auf Watchlist ansehen') : escAttr(it.title + ' auf Watchlist setzen')}">${matchedItem ? '✓ Liste' : '+'}</button>`
+      : '';
+    actionsHtml = `<div class="live-card-actions"><button class="live-cta-btn${trackCls}" type="button" data-live-act="open" data-live-id="${escAttr(it.id)}">${esc(liveStreamButtonLabel(it))}</button>${trailerBtn}${listBtn}</div>`;
+  }
+
   return `
-    <article class="live-band-card${matchedItem ? ' is-match' : ''}" role="listitem">
-      <div class="live-band-thumb">
-        ${imgUrl ? `<img src="${escAttr(imgUrl)}" alt="" loading="lazy">` : `<div class="live-band-thumb-fallback" aria-hidden="true">▶</div>`}
-        <div class="live-band-scrim"></div>
-        <div class="live-band-top-badges">
-          <span class="live-track-pill ${escAttr(it.track || 'sat')}">${badgeText}</span>
-          ${rightPill}
+    <article class="live-card${matchedItem ? ' is-match' : ''}">
+      <div class="live-card-media">
+        ${imgUrl
+          ? `<img src="${escAttr(imgUrl)}" alt="" loading="lazy">`
+          : `<div class="live-card-fallback track-${escAttr(track)}"><span class="live-card-fallback-ch">${esc(it.shortChannel || it.channel || '')}</span><span class="live-card-fallback-tag">${esc(chFallbackTag)}</span></div>`}
+        <div class="live-card-scrim"></div>
+        <div class="live-card-top-badges">
+          <span class="live-track-pill ${escAttr(track)}">${badgeText}</span>
+          <span class="live-track-pill ${statusCls}">${esc(statusText)}</span>
         </div>
-        <div class="live-band-ch">${esc(it.shortChannel || it.channel || '')}</div>
+        <div class="live-card-ch">
+          <span>${esc(it.shortChannel || it.channel || '')}</span>
+          ${it.tmdbId && it.rating ? `<span>★ ${Number(it.rating).toFixed(1)}</span>` : ''}
+        </div>
         ${progBar}
       </div>
-      <div class="live-band-body">
-        <div class="live-band-show">${esc(it.title || '')}</div>
-        <div class="live-band-sub">${esc(subParts.join(' · ') || it.description || '')}</div>
-        ${renderLiveActionRow(it, matchedItem)}
+      <div class="live-card-body">
+        <h3 class="live-card-title">${esc(it.title || '')}</h3>
+        <div class="live-card-meta">${esc(metaParts.filter(Boolean).join(' · '))}</div>
+        ${it.description ? `<p class="live-card-desc">${esc(it.description)}</p>` : ''}
+        ${actionsHtml}
       </div>
     </article>`;
 }
 
-function renderLiveBand() {
-  if (!$liveBandSection || !$liveBandTrack) return;
-  const raw = Array.isArray(liveTvData && liveTvData.spotlight) ? liveTvData.spotlight : [];
-  indexLiveTvData(liveTvData);
-  if (raw.length === 0 || activeMainView === 'discover') {
-    $liveBandSection.classList.add('hidden');
-    if (raw.length === 0) $liveBandTrack.innerHTML = '';
-    return;
-  }
-  const sorted = [...raw].sort((a, b) => (isLiveItemOnWatchlist(b) ? 1 : 0) - (isLiveItemOnWatchlist(a) ? 1 : 0));
-  $liveBandTrack.innerHTML = sorted.map(renderLiveBandCardHtml).join('');
-  const matchCount = sorted.filter((x) => isLiveItemOnWatchlist(x)).length;
-  if ($liveBandMeta) {
-    $liveBandMeta.textContent = matchCount > 0
-      ? `${matchCount}× Watchlist · Sat · Magenta · Sky`
-      : 'Sat · Magenta HD · Sky';
-  }
-  $liveBandSection.classList.remove('hidden');
-}
+function renderLiveView(nowDate = new Date()) {
+  if (!$liveView) return;
+  if (activeMainView !== 'live' && activeMainView !== 'primetime') return;
 
-function renderLiveSheetGroup(title, list) {
-  if (!list || list.length === 0) return '';
-  const cards = list.map((it) => {
-    const matchedItem = isLiveItemOnWatchlist(it);
-    const timeText = it.isLive ? `LIVE · ${it.startTime || ''}`.trim() : (it.startTime ? `${it.startTime} Uhr` : 'Heute');
-    return `
-      <div class="live-sheet-card${matchedItem ? ' is-match' : ''}">
-        <div class="live-sheet-card-top">
-          <span class="live-sheet-channel">${esc(it.shortChannel || it.channel || '')}</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <span class="live-track-pill ${escAttr(it.track || 'sat')}">${esc(it.badge || it.trackLabel || 'SAT')}</span>
-            <span class="live-track-pill ${it.isLive ? 'live' : 'time'}">${esc(timeText)}</span>
-            ${matchedItem ? '<span class="live-track-pill match">★ Liste</span>' : ''}
-          </div>
-        </div>
-        <div class="live-band-show">${esc(it.title || '')}</div>
-        ${it.description ? `<p class="live-sheet-desc">${esc(it.description)}</p>` : ''}
-        ${renderLiveActionRow(it, matchedItem)}
-      </div>`;
-  }).join('');
-  return `<section><h3 class="live-sheet-group-title">${esc(title)}</h3><div class="live-sheet-grid">${cards}</div></section>`;
-}
+  const viewMode = activeMainView;
+  indexLiveTvData(liveTvData, nowDate);
+  const { minutes } = berlinNowParts(nowDate);
+  const primetimeTunable = isPrimetimeTunableNow(nowDate);
 
-function renderLiveTvSheet() {
-  if (!$liveTvSheetBody) return;
   if (!liveTvData) {
-    $liveTvSheetBody.innerHTML = '<div class="search-empty">Live-TV-Programm wird geladen…</div>';
+    $liveView.innerHTML = `
+      <div class="live-view-head">
+        <div class="live-view-title-group">
+          <div class="live-view-heading">
+            ${viewMode === 'live' ? '<span class="live-pulse-dot" aria-hidden="true"></span>' : ''}
+            <h2 class="live-view-title">${viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr'}</h2>
+          </div>
+          <span class="live-view-sub">${liveTvFetching ? 'Programm wird geladen…' : 'Aktuelles TV-Programm über Satellit, MagentaTV HD & Sky Stream'}</span>
+        </div>
+        <button class="live-view-refresh" type="button" data-live-refresh="1"${liveTvFetching ? ' disabled' : ''}>↻ Aktualisieren</button>
+      </div>
+      <div class="live-empty">${liveTvFetching ? 'Lade Live-Programm…' : 'Aktuell noch keine Live-Daten geladen.'}</div>`;
     return;
   }
-  const f = activeLiveSheetFilter || 'all';
-  const matchFilter = (it) => {
-    if (f === 'all') return true;
-    if (f === 'now') return !!it.isLive || it.slot === 'now';
-    if (f === 'primetime') return !it.isLive && it.slot === 'primetime';
-    return it.track === f;
-  };
-  const sortMatches = (arr) => [...(arr || [])]
-    .filter(matchFilter)
-    .sort((a, b) => (isLiveItemOnWatchlist(b) ? 1 : 0) - (isLiveItemOnWatchlist(a) ? 1 : 0));
 
-  const nowList = sortMatches(liveTvData.now);
-  const primeList = sortMatches(liveTvData.primetime);
-  const sportList = sortMatches(liveTvData.sport);
-  const html = [
-    f === 'primetime' ? '' : renderLiveSheetGroup('Jetzt im TV', nowList),
-    f === 'now' ? '' : renderLiveSheetGroup('Heute ab 20:15 Uhr', primeList),
-    (f === 'all' || f === 'sky') ? renderLiveSheetGroup('Sky Sport & Live-Events', sportList) : '',
-  ].filter(Boolean).join('');
+  const baseList = viewMode === 'live'
+    ? buildLiveNowItems(liveTvData, nowDate)
+    : buildPrimetimeItems(liveTvData, nowDate);
 
-  $liveTvSheetBody.innerHTML = html || '<div class="search-empty">Keine passenden Sendungen gefunden</div>';
-}
+  const satCnt = baseList.filter((x) => x.track === 'sat').length;
+  const magCnt = baseList.filter((x) => x.track === 'magenta').length;
+  const skyCnt = baseList.filter((x) => x.track === 'sky').length;
 
-function openLiveTvModal() {
-  if (!$liveTvModal) return;
-  renderLiveTvSheet();
-  $liveTvModal.classList.add('open');
-  openOverlay($liveTvModal, () => {
-    const c = document.getElementById('liveTvClose');
-    if (c) c.focus();
-  });
-}
+  const trackFilter = activeLiveTrackFilter || 'all';
+  const filtered = trackFilter === 'all' ? baseList : baseList.filter((x) => x.track === trackFilter);
+  const matchCount = filtered.filter((x) => isLiveItemOnWatchlist(x)).length;
 
-function closeLiveTvModal(opts) {
-  if (!$liveTvModal) return;
-  $liveTvModal.classList.remove('open');
-  closeOverlay($liveTvModal, !(opts && opts.restoreFocus === false));
+  const headingTitle = viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr';
+  const baseSub = viewMode === 'live'
+    ? 'Laufende Sendungen · Satellit HD, MagentaTV HD & Sky Stream'
+    : (primetimeTunable ? 'Abendprogramm läuft — direkt einschalten oder vormerken' : 'Abendprogramm — Trailer ansehen oder direkt auf die Merkliste setzen');
+  const subText = matchCount > 0 ? `${matchCount}× auf deiner Watchlist · ${baseSub}` : baseSub;
+
+  const filterChips = [
+    { id: 'all', label: `Alle (${baseList.length})` },
+    { id: 'sat', label: `Satellit HD (${satCnt})` },
+    { id: 'magenta', label: `Magenta HD (${magCnt})` },
+    { id: 'sky', label: `Sky Stream (${skyCnt})` },
+  ].map((c) => {
+    const isAct = trackFilter === c.id;
+    return `<button class="filter-chip${isAct ? ' active' : ''}" type="button" data-live-track="${c.id}" aria-pressed="${String(isAct)}">${esc(c.label)}</button>`;
+  }).join('');
+
+  const cardsHtml = filtered.length > 0
+    ? `<div class="live-grid">${filtered.map((it) => renderLiveCardHtml(it, { viewMode, nowMin: minutes, primetimeTunable })).join('')}</div>`
+    : `<div class="live-empty">Keine Sendungen in diesem Empfangsweg gefunden.</div>`;
+
+  $liveView.innerHTML = `
+    <div class="live-view-head">
+      <div class="live-view-title-group">
+        <div class="live-view-heading">
+          ${viewMode === 'live' ? '<span class="live-pulse-dot" aria-hidden="true"></span>' : ''}
+          <h2 class="live-view-title">${esc(headingTitle)}</h2>
+        </div>
+        <span class="live-view-sub">${esc(subText)}</span>
+      </div>
+      <button class="live-view-refresh" type="button" data-live-refresh="1"${liveTvFetching ? ' disabled' : ''}>↻ Aktualisieren</button>
+    </div>
+    <div class="live-filter-bar" role="group" aria-label="Empfangsweg filtern">${filterChips}</div>
+    ${cardsHtml}`;
 }
 
 function handleLivePrimaryAction(item) {
   if (!item) return;
-  if (item.track === 'sky') {
+  const track = resolveReceivableTrack(item) || item.track;
+  if (track === 'sky') {
     if (isMacDesktop()) {
       const title = item.title || '';
       if (title) copyTextToClipboard(title);
@@ -2546,7 +2748,7 @@ function handleLivePrimaryAction(item) {
     window.open(item.webUrl || 'https://www.sky.de/tvguide', '_blank', 'noopener,noreferrer');
     return;
   }
-  const fallback = item.track === 'magenta'
+  const fallback = track === 'magenta'
     ? 'https://web.magentatv.de/tv-guide'
     : 'https://www.ardmediathek.de/live';
   window.open(item.webUrl || fallback, '_blank', 'noopener,noreferrer');
@@ -2556,7 +2758,6 @@ async function handleLiveAddToWatchlist(item) {
   if (!item) return;
   const existing = isLiveItemOnWatchlist(item);
   if (existing) {
-    if ($liveTvModal && $liveTvModal.classList.contains('open')) closeLiveTvModal({ restoreFocus: false });
     openDetail(existing);
     return;
   }
@@ -2572,11 +2773,10 @@ async function handleLiveAddToWatchlist(item) {
       rating: item.rating || null,
       providers_app: item.mediathekServiceId ? [item.mediathekServiceId] : [],
     });
-    renderLiveBand();
-    if ($liveTvModal && $liveTvModal.classList.contains('open')) renderLiveTvSheet();
+    updateViewCounts();
+    renderLiveView();
     return;
   }
-  if ($liveTvModal && $liveTvModal.classList.contains('open')) closeLiveTvModal({ restoreFocus: false });
   openAddModal(item.title || '');
 }
 
@@ -2585,30 +2785,44 @@ function handleLiveCardEvent(action, id) {
   if (!item) return;
   if (action === 'open') {
     handleLivePrimaryAction(item);
+  } else if (action === 'trailer') {
+    openTrailerModal({
+      title: item.title || '',
+      year: '',
+      type: item.mediaType || 'movie',
+      tmdbId: item.tmdbId || 0,
+      trailerKey: null,
+      searchQuery: `${item.title || ''} Trailer Deutsch`.trim(),
+      magItem: null,
+    });
   } else if (action === 'detail') {
     const existing = isLiveItemOnWatchlist(item);
-    if (existing) {
-      if ($liveTvModal && $liveTvModal.classList.contains('open')) closeLiveTvModal({ restoreFocus: false });
-      openDetail(existing);
-    }
+    if (existing) openDetail(existing);
   } else if (action === 'add') {
     handleLiveAddToWatchlist(item);
   }
 }
 
-async function fetchLiveTv() {
-  if (!SYNC_ENABLED) return null;
+async function fetchLiveTv({ force = false } = {}) {
+  if (!SYNC_ENABLED || liveTvFetching) return null;
+  liveTvFetching = true;
+  if (activeMainView === 'live' || activeMainView === 'primetime') renderLiveView();
   try {
-    const res = await fetchT(LIVE_TV_URL, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
+    const url = force ? `${LIVE_TV_URL}?force=1` : LIVE_TV_URL;
+    const res = await fetchT(url, { headers: { 'X-API-Key': SYNC_KEY }, cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json();
     if (!data || !data.ok) return null;
     liveTvData = data;
-    renderLiveBand();
-    if ($liveTvModal && $liveTvModal.classList.contains('open')) renderLiveTvSheet();
+    indexLiveTvData(data);
+    updateViewCounts();
+    if (activeMainView === 'live' || activeMainView === 'primetime') renderLiveView();
     return data;
   } catch (_) {
     return null;
+  } finally {
+    liveTvFetching = false;
+    if (activeMainView === 'live' || activeMainView === 'primetime') renderLiveView();
   }
 }
 
@@ -2617,7 +2831,7 @@ const MAGAZINE_URL = `${WORKER_BASE}/magazine`;
 const MAGAZINE_FEEDBACK_URL = `${WORKER_BASE}/magazine/feedback`;
 const MAGAZINE_REFRESH_URL = `${WORKER_BASE}/magazine/refresh`;
 let magazine = null;
-let activeMainView = 'list';      // 'list' | 'discover'
+let activeMainView = 'list';      // 'list' | 'discover' | 'live' | 'primetime'
 let activeMagProvider = 'all';    // 'all' | serviceId | '__upcoming__'
 let magRefreshing = false;
 let magCurrentIdx = 0;            // legacy reader compat
@@ -2680,7 +2894,7 @@ function matchPctForMag(it) {
   return null;
 }
 
-function updateViewCounts() {
+function updateViewCounts(nowDate = new Date()) {
   if ($tabListCount) {
     const openCount = items.filter((i) => !i.watched).length;
     $tabListCount.textContent = openCount > 0 ? String(openCount) : '';
@@ -2693,31 +2907,50 @@ function updateViewCounts() {
     $tabDiscoverCount.textContent = shown > 0 ? String(shown) : '';
     $tabDiscoverCount.classList.toggle('hidden', shown === 0);
   }
+  if ($tabLiveCount) {
+    const liveCnt = liveTvData ? buildLiveNowItems(liveTvData, nowDate).length : 0;
+    $tabLiveCount.textContent = liveCnt > 0 ? String(liveCnt) : '';
+    $tabLiveCount.classList.toggle('hidden', liveCnt === 0);
+  }
+  if ($tabPrimeCount) {
+    const primeCnt = liveTvData ? buildPrimetimeItems(liveTvData, nowDate).length : 0;
+    $tabPrimeCount.textContent = primeCnt > 0 ? String(primeCnt) : '';
+    $tabPrimeCount.classList.toggle('hidden', primeCnt === 0);
+  }
 }
 
 function switchMainView(view) {
-  const next = view === 'discover' ? 'discover' : 'list';
-  if (next === 'discover' && !SYNC_ENABLED) {
+  const next = view === 'discover' || view === 'live' || view === 'primetime' ? view : 'list';
+  if (next !== 'list' && !SYNC_ENABLED) {
     openSyncModal();
     return;
   }
   activeMainView = next;
-  if ($tabList) {
-    $tabList.classList.toggle('active', next === 'list');
-    $tabList.setAttribute('aria-selected', String(next === 'list'));
+  const tabMap = [
+    [$tabList, 'list'],
+    [$tabDiscover, 'discover'],
+    [$tabLiveNow, 'live'],
+    [$tabLivePrime, 'primetime'],
+  ];
+  for (const [el, id] of tabMap) {
+    if (!el) continue;
+    const isActive = next === id;
+    el.classList.toggle('active', isActive);
+    el.setAttribute('aria-selected', String(isActive));
   }
-  if ($tabDiscover) {
-    $tabDiscover.classList.toggle('active', next === 'discover');
-    $tabDiscover.setAttribute('aria-selected', String(next === 'discover'));
+  if ($app) {
+    $app.classList.toggle('view-discover', next === 'discover');
+    $app.classList.toggle('view-live', next === 'live');
+    $app.classList.toggle('view-primetime', next === 'primetime');
   }
-  if ($app) $app.classList.toggle('view-discover', next === 'discover');
   if ($discoverView) $discoverView.classList.toggle('hidden', next !== 'discover');
-  if ($liveBandSection) {
-    const hasLive = !!(liveTvData && Array.isArray(liveTvData.spotlight) && liveTvData.spotlight.length > 0);
-    $liveBandSection.classList.toggle('hidden', next === 'discover' || !hasLive);
-  }
+  if ($liveView) $liveView.classList.toggle('hidden', next !== 'live' && next !== 'primetime');
+
   if (next === 'discover') {
     renderDiscoverView();
+  } else if (next === 'live' || next === 'primetime') {
+    if (!liveTvData && !liveTvFetching) fetchLiveTv();
+    renderLiveView();
   }
 }
 
@@ -3173,15 +3406,19 @@ function closeFilterSheet() {
 
 function maybeAutoOpenMagazine() {
   const params = new URLSearchParams(window.location.search);
-  const autoMag = params.get('magazin') === '1' || params.get('view') === 'discover';
-  if (!autoMag) return;
+  const viewParam = params.get('view');
+  let target = null;
+  if (params.get('magazin') === '1' || viewParam === 'discover') target = 'discover';
+  else if (viewParam === 'live') target = 'live';
+  else if (viewParam === 'primetime') target = 'primetime';
+  if (!target) return;
   params.delete('magazin');
   params.delete('view');
   const newUrl = params.toString()
     ? `${window.location.pathname}?${params.toString()}`
     : window.location.pathname;
   window.history.replaceState({}, '', newUrl);
-  if (SYNC_ENABLED) switchMainView('discover');
+  if (SYNC_ENABLED) switchMainView(target);
 }
 
 // ---- Inline YouTube Trailer Player (#trailerModal) ----
