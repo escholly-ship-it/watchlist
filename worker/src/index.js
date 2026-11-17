@@ -328,6 +328,10 @@ export default {
       return jsonResponse({ magazine: magazine || null, timestamp: Date.now() });
     }
 
+    if (url.pathname === '/live-tv' && request.method === 'GET') {
+      return handleLiveTv(env, url);
+    }
+
     if (url.pathname === '/magazine/feedback' && request.method === 'POST') {
       return handleMagazineFeedback(request, env, apiKey);
     }
@@ -2030,6 +2034,510 @@ function pickFanOf(c, tasteSample) {
   const minOverlap = cGenres.size === 1 ? 1 : 2;
   const bestOverlap = best ? (best.genre_ids || []).filter((g) => cGenres.has(g)).length : 0;
   return bestOverlap >= minOverlap ? best.title : null;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Live-TV & 20:15 3-Spur-EPG (Satellit · MagentaTV HD · Sky Stream)
+// ─────────────────────────────────────────────────────────────────────────
+
+const LIVE_TV_KV_KEY = 'live_tv:v1';
+const LIVE_TV_TTL_MS = 10 * 60 * 1000;
+const LIVE_TV_FORCE_COOLDOWN_MS = 30 * 1000;
+const LIVE_TV_FETCH_TIMEOUT_MS = 4500;
+const LIVE_TV_TMDB_MAX = 8;
+const LIVE_TV_BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+const LIVE_TV_SAT_CHANNELS = {
+  'das erste': { shortChannel: 'DAS ERSTE', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'ard': { shortChannel: 'DAS ERSTE', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'zdf': { shortChannel: 'ZDF HD', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
+  'arte': { shortChannel: 'ARTE HD', webUrl: 'https://www.arte.tv/de/live/', mediathekServiceId: 'arte' },
+  '3sat': { shortChannel: '3SAT HD', webUrl: 'https://www.3sat.de/programm/livestream', mediathekServiceId: '3sat' },
+  'zdfneo': { shortChannel: 'ZDFNEO', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
+  'zdfinfo': { shortChannel: 'ZDFINFO', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf' },
+  'one': { shortChannel: 'ONE HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'kika': { shortChannel: 'KIKA HD', webUrl: 'https://www.kika.de/tv-programm/live', mediathekServiceId: 'kika' },
+  'wdr': { shortChannel: 'WDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'ndr': { shortChannel: 'NDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'br': { shortChannel: 'BR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'swr': { shortChannel: 'SWR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'mdr': { shortChannel: 'MDR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'hr': { shortChannel: 'HR HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'rbb': { shortChannel: 'RBB HD', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'phoenix': { shortChannel: 'PHOENIX', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'tagesschau24': { shortChannel: 'TAGESSCHAU24', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'ard-alpha': { shortChannel: 'ARD-ALPHA', webUrl: 'https://www.ardmediathek.de/live', mediathekServiceId: 'ard' },
+  'servustv': { shortChannel: 'SERVUSTV', webUrl: 'https://www.servustv.com/jetzt-live/', mediathekServiceId: null },
+  'df1': { shortChannel: 'DF1 HD', webUrl: 'https://www.servustv.com/jetzt-live/', mediathekServiceId: null },
+};
+
+const LIVE_TV_MAGENTA_CHANNELS = {
+  'rtl': { shortChannel: 'RTL HD', mediathekServiceId: 'rtl' },
+  'prosieben': { shortChannel: 'PROSIEBEN', mediathekServiceId: 'magenta' },
+  'sat.1': { shortChannel: 'SAT.1 HD', mediathekServiceId: 'magenta' },
+  'vox': { shortChannel: 'VOX HD', mediathekServiceId: 'rtl' },
+  'kabel eins': { shortChannel: 'KABEL EINS', mediathekServiceId: 'magenta' },
+  'nitro': { shortChannel: 'NITRO HD', mediathekServiceId: 'rtl' },
+  'rtl zwei': { shortChannel: 'RTLZWEI', mediathekServiceId: 'rtl' },
+  'prosieben maxx': { shortChannel: 'PRO7 MAXX', mediathekServiceId: 'magenta' },
+  'sixx': { shortChannel: 'SIXX HD', mediathekServiceId: 'magenta' },
+  'sat.1 gold': { shortChannel: 'SAT.1 GOLD', mediathekServiceId: 'magenta' },
+  'super rtl': { shortChannel: 'SUPER RTL', mediathekServiceId: 'rtl' },
+  'sport1': { shortChannel: 'SPORT1 HD', mediathekServiceId: 'magenta' },
+  'eurosport 1': { shortChannel: 'EUROSPORT 1', mediathekServiceId: 'magenta' },
+  'dmax': { shortChannel: 'DMAX HD', mediathekServiceId: 'magenta' },
+  'tele 5': { shortChannel: 'TELE 5 HD', mediathekServiceId: 'magenta' },
+  'disney channel': { shortChannel: 'DISNEY CH.', mediathekServiceId: 'magenta' },
+  'comedy central': { shortChannel: 'COMEDY C.', mediathekServiceId: 'magenta' },
+  'welt': { shortChannel: 'WELT HD', mediathekServiceId: 'magenta' },
+  'ntv': { shortChannel: 'NTV HD', mediathekServiceId: 'rtl' },
+  'voxup': { shortChannel: 'VOXUP', mediathekServiceId: 'rtl' },
+  'rtlup': { shortChannel: 'RTLUP', mediathekServiceId: 'rtl' },
+};
+
+const LIVE_TV_SKY_PAGES = [
+  { channel: 'Sky Cinema Premiere', slug: 'sky-cinema-premiere,CIN.html', slotHint: 'movie' },
+  { channel: 'Sky Cinema Highlights', slug: 'sky-cinema-highlights,SKYCH.html', slotHint: 'movie' },
+  { channel: 'Sky Atlantic', slug: 'sky-atlantic,SKYAT.html', slotHint: 'series' },
+  { channel: 'Sky Sport Bundesliga', slug: 'sky-sport-bundesliga,BULI.html', slotHint: 'sport' },
+  { channel: 'Sky Sport Top Event', slug: 'sky-sport-top-event,SKYSTE.html', slotHint: 'sport' },
+];
+
+const LIVE_TV_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|doppelpass|sportstudio|nachrichten|teletext|börse|boerse)\b/i;
+
+function resolveChannelMeta(rawChannel) {
+  const clean = String(rawChannel || '').replace(/\s+/g, ' ').trim();
+  const key = clean.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(LIVE_TV_SAT_CHANNELS, key)) {
+    const info = LIVE_TV_SAT_CHANNELS[key];
+    return {
+      channel: clean,
+      shortChannel: info.shortChannel,
+      track: 'sat',
+      trackLabel: 'SAT HD',
+      badge: 'SAT',
+      webUrl: info.webUrl,
+      mediathekServiceId: info.mediathekServiceId,
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(LIVE_TV_MAGENTA_CHANNELS, key)) {
+    const info = LIVE_TV_MAGENTA_CHANNELS[key];
+    return {
+      channel: clean,
+      shortChannel: info.shortChannel,
+      track: 'magenta',
+      trackLabel: 'MAGENTA HD',
+      badge: 'MAGENTA',
+      webUrl: 'https://web.magentatv.de/tv-guide',
+      mediathekServiceId: info.mediathekServiceId,
+    };
+  }
+  if (key.startsWith('sky') || key.includes('warner tv') || key.includes('kinowelt')) {
+    return {
+      channel: clean.replace(/^sky\s+/i, 'Sky '),
+      shortChannel: clean.toUpperCase().slice(0, 14),
+      track: 'sky',
+      trackLabel: 'SKY · HDMI 3',
+      badge: 'SKY',
+      webUrl: 'https://www.sky.de/tvguide',
+      mediathekServiceId: 'sky',
+    };
+  }
+  return {
+    channel: clean,
+    shortChannel: clean.toUpperCase().slice(0, 14),
+    track: 'sat',
+    trackLabel: 'SAT HD',
+    badge: 'SAT',
+    webUrl: 'https://www.ardmediathek.de/live',
+    mediathekServiceId: null,
+  };
+}
+
+function decodeXmlEntities(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function upgradeTvSpielfilmImg(url) {
+  if (!url) return '';
+  return String(url).replace(/Resize,width=\d+/i, 'Resize,width=1280');
+}
+
+function berlinMinutesNow(nowDate = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('de-DE', {
+      timeZone: 'Europe/Berlin',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(nowDate);
+    const h = Number(parts.find((p) => p.type === 'hour')?.value || 0);
+    const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
+    return (h % 24) * 60 + m;
+  } catch {
+    return nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
+  }
+}
+
+function parseHhMmToMinutes(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+  if (!m) return null;
+  return (Number(m[1]) % 24) * 60 + Number(m[2]);
+}
+
+function computeProgressPct(startStr, endStr, nowMin, isLiveSlot) {
+  const start = parseHhMmToMinutes(startStr);
+  if (start === null) return isLiveSlot ? 40 : 0;
+  let end = parseHhMmToMinutes(endStr);
+  if (end === null) {
+    if (!isLiveSlot) return 0;
+    end = start + 55;
+  }
+  let cur = nowMin;
+  if (end <= start) end += 1440;
+  if (cur < start && cur + 1440 <= end + 60) cur += 1440;
+  if (cur < start) return 0;
+  if (cur >= end) return 96;
+  const pct = Math.round(((cur - start) / Math.max(10, end - start)) * 100);
+  return Math.max(5, Math.min(96, pct));
+}
+
+function parseTvSpielfilmRss(xmlText, slot, nowMin) {
+  if (!xmlText || typeof xmlText !== 'string') return [];
+  const items = [];
+  const itemMatches = xmlText.match(/<item\b[\s\S]*?<\/item>/gi) || [];
+  for (const block of itemMatches) {
+    const rawTitle = decodeXmlEntities((block.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || '');
+    if (!rawTitle) continue;
+    const parts = rawTitle.split('|').map((p) => p.trim());
+    if (parts.length < 3) continue;
+    const startTime = parts[0];
+    const rawChannel = parts[1];
+    const title = parts.slice(2).join(' | ');
+    const desc = decodeXmlEntities((block.match(/<description>([\s\S]*?)<\/description>/i) || [])[1] || '');
+    const encMatch = block.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
+    const imageUrl = encMatch ? upgradeTvSpielfilmImg(decodeXmlEntities(encMatch[1])) : '';
+    const meta = resolveChannelMeta(rawChannel);
+    const isLive = slot === 'now';
+    const progressPct = isLive ? computeProgressPct(startTime, '', nowMin, true) : 0;
+    const idSlug = `${meta.track}_${meta.shortChannel}_${startTime}_${title}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .slice(0, 64);
+
+    items.push({
+      id: idSlug,
+      ...meta,
+      title,
+      description: desc,
+      startTime,
+      endTime: '',
+      isLive,
+      progressPct,
+      slot,
+      imageUrl,
+      tmdbId: null,
+      mediaType: null,
+      rating: null,
+      posterPath: null,
+    });
+  }
+  return items;
+}
+
+function parseSkyChannelHtml(html, channelName, slotHint, nowMin) {
+  if (!html || typeof html !== 'string') return [];
+  const rows = html.match(/<tr[^>]*class="hover"[\s\S]*?<\/tr>/gi) || [];
+  const parsed = [];
+  for (const row of rows.slice(0, 16)) {
+    const tm = row.match(/(\d{2}:\d{2})\s*[-–]\s*(\d{2}:\d{2})/);
+    const col3 = row.match(/class="col-3"[^>]*>([\s\S]*?)<\/td>/i);
+    if (!tm || !col3) continue;
+    const linkMatch = col3[1].match(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    const title = decodeXmlEntities(linkMatch ? linkMatch[2] : col3[1]);
+    if (!title) continue;
+    const col4 = row.match(/class="col-4"[^>]*>([\s\S]*?)<\/td>/i);
+    const genre = col4 ? decodeXmlEntities(col4[1]) : '';
+    const startTime = tm[1];
+    const endTime = tm[2];
+    const startMin = parseHhMmToMinutes(startTime);
+    let endMin = parseHhMmToMinutes(endTime);
+    if (startMin !== null && endMin !== null && endMin <= startMin) endMin += 1440;
+    let cur = nowMin;
+    if (startMin !== null && cur < startMin && endMin !== null && cur + 1440 <= endMin + 30) cur += 1440;
+    const isLive = startMin !== null && endMin !== null && cur >= startMin && cur < endMin;
+    const progressPct = isLive ? computeProgressPct(startTime, endTime, nowMin, true) : 0;
+    const meta = resolveChannelMeta(channelName);
+    const isEvening = startMin !== null && startMin >= 19 * 60 + 45;
+    const slot = slotHint === 'sport' ? 'sport' : (isLive ? 'now' : 'primetime');
+
+    parsed.push({
+      id: `${meta.track}_${meta.shortChannel}_${startTime}_${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64),
+      ...meta,
+      title,
+      description: genre ? `${genre} · ${channelName}` : channelName,
+      startTime,
+      endTime,
+      isLive,
+      isEvening,
+      progressPct,
+      slot,
+      imageUrl: '',
+      tmdbId: null,
+      mediaType: null,
+      rating: null,
+      posterPath: null,
+    });
+  }
+  const liveItem = parsed.find((x) => x.isLive) || parsed[0];
+  const eveningItem = parsed.find((x) => !x.isLive && x.isEvening);
+  const out = [];
+  if (liveItem) { delete liveItem.isEvening; out.push(liveItem); }
+  if (eveningItem && (!liveItem || eveningItem.title !== liveItem.title)) {
+    delete eveningItem.isEvening;
+    out.push(eveningItem);
+  }
+  return out;
+}
+
+async function fetchTextTimeout(url, timeoutMs = LIVE_TV_FETCH_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': LIVE_TV_BROWSER_UA, Accept: 'application/xml,text/xml,text/html,application/json,*/*' },
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) return null;
+    return await resp.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function enrichLiveHighlights(candidates, env) {
+  if (!env.TMDB_API_KEY || !Array.isArray(candidates) || candidates.length === 0) return;
+  const seenTitles = new Set();
+  let enriched = 0;
+  for (const item of candidates) {
+    if (enriched >= LIVE_TV_TMDB_MAX || tmdbCalls >= TMDB_CALL_CEILING) break;
+    if (!item || !item.title || item.slot === 'sport') continue;
+    if (LIVE_TV_NON_TMDB_RE.test(item.title)) continue;
+    const normTitle = item.title.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+    const key = normTitle.toLowerCase();
+    if (!normTitle || normTitle.length < 3 || seenTitles.has(key)) continue;
+    seenTitles.add(key);
+
+    enriched++;
+    const data = await tmdbGet('search/multi', { query: normTitle, page: 1, include_adult: false }, env);
+    const hit = data && Array.isArray(data.results)
+      ? data.results.find((r) => (r.media_type === 'movie' || r.media_type === 'tv') && (r.backdrop_path || r.poster_path))
+      : null;
+    if (hit) {
+      item.tmdbId = hit.id;
+      item.mediaType = hit.media_type;
+      item.rating = typeof hit.vote_average === 'number' && hit.vote_average > 0
+        ? Math.round(hit.vote_average * 10) / 10
+        : null;
+      item.posterPath = hit.poster_path || null;
+      if (hit.backdrop_path) {
+        item.imageUrl = `https://image.tmdb.org/t/p/w1280${hit.backdrop_path}`;
+      }
+    }
+  }
+}
+
+function dedupeLiveItems(list) {
+  const seen = new Set();
+  const out = [];
+  for (const it of list) {
+    if (!it || !it.channel || !it.title) continue;
+    const k = `${it.channel.toLowerCase()}|${it.startTime}|${it.title.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(it);
+  }
+  return out;
+}
+
+async function handleLiveTv(env, url) {
+  tmdbCalls = 0;
+  kvCalls = 0;
+  ceilingHit = false;
+
+  const nowMs = Date.now();
+  const force = url.searchParams.get('force') === '1';
+  let cached = null;
+  try {
+    cached = await kvGet(env, LIVE_TV_KV_KEY, 'json');
+  } catch {
+    cached = null;
+  }
+
+  if (cached && typeof cached.generatedAt === 'number') {
+    const ageMs = nowMs - cached.generatedAt;
+    if ((!force && ageMs < LIVE_TV_TTL_MS) || (force && ageMs < LIVE_TV_FORCE_COOLDOWN_MS)) {
+      return jsonResponse({ ...cached, cached: true });
+    }
+  }
+
+  const nowMin = berlinMinutesNow(new Date(nowMs));
+  const [jetztXml, p2015Xml, filmeXml, bl1Text, ...skyHtmls] = await Promise.all([
+    fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/jetzt.xml'),
+    fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/heute2015.xml'),
+    fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/filme.xml'),
+    fetchTextTimeout('https://api.openligadb.de/getmatchdata/bl1'),
+    ...LIVE_TV_SKY_PAGES.map((p) => fetchTextTimeout(`https://www.tvspielfilm.de/tv-programm/sendungen/${p.slug}`)),
+  ]);
+
+  const nowRss = parseTvSpielfilmRss(jetztXml, 'now', nowMin);
+  const primeRss = parseTvSpielfilmRss(p2015Xml, 'primetime', nowMin);
+  const filmRss = parseTvSpielfilmRss(filmeXml, 'primetime', nowMin);
+
+  // Build image lookup by channel+title from RSS feeds (e.g. filme.xml carries Sky Cinema 20:15 covers)
+  const rssImageMap = new Map();
+  for (const it of [...filmRss, ...primeRss, ...nowRss]) {
+    if (it.imageUrl) rssImageMap.set(`${it.channel.toLowerCase()}|${it.title.toLowerCase()}`, it.imageUrl);
+  }
+
+  const skyParsed = [];
+  LIVE_TV_SKY_PAGES.forEach((pageCfg, idx) => {
+    const list = parseSkyChannelHtml(skyHtmls[idx], pageCfg.channel, pageCfg.slotHint, nowMin);
+    for (const entry of list) {
+      const matchImg = rssImageMap.get(`${entry.channel.toLowerCase()}|${entry.title.toLowerCase()}`);
+      if (matchImg) entry.imageUrl = matchImg;
+      skyParsed.push(entry);
+    }
+  });
+
+  // Next Bundesliga fixture card on Sky Sport Bundesliga
+  const sportList = skyParsed.filter((x) => x.slot === 'sport');
+  if (bl1Text) {
+    try {
+      const matches = JSON.parse(bl1Text);
+      const nextMatch = Array.isArray(matches)
+        ? matches.find((m) => m && !m.matchIsFinished && m.team1 && m.team2)
+        : null;
+      if (nextMatch) {
+        const t1 = nextMatch.team1.shortName || nextMatch.team1.teamName;
+        const t2 = nextMatch.team2.shortName || nextMatch.team2.teamName;
+        const dtStr = String(nextMatch.matchDateTime || '');
+        const hhmm = dtStr.length >= 16 ? dtStr.slice(11, 16) : '20:30';
+        const dateLabel = dtStr.length >= 10 ? `${dtStr.slice(8, 10)}.${dtStr.slice(5, 7)}.` : '';
+        const meta = resolveChannelMeta('Sky Sport Bundesliga');
+        sportList.unshift({
+          id: `sky_bl1_${t1}_${t2}`.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+          ...meta,
+          title: `Bundesliga: ${t1} – ${t2}`,
+          description: `${dateLabel ? dateLabel + ' · ' : ''}${hhmm} Uhr · Live auf Sky Sport Bundesliga`,
+          startTime: hhmm,
+          endTime: '',
+          isLive: false,
+          progressPct: 0,
+          slot: 'sport',
+          imageUrl: '',
+          tmdbId: null,
+          mediaType: null,
+          rating: null,
+          posterPath: null,
+        });
+      }
+    } catch {
+      // ignore invalid OpenLigaDB JSON
+    }
+  }
+
+  const nowMerged = dedupeLiveItems([
+    ...skyParsed.filter((x) => x.isLive && x.slot !== 'sport'),
+    ...nowRss,
+  ]).slice(0, 20);
+
+  const primetimeMerged = dedupeLiveItems([
+    ...filmRss.filter((x) => x.track === 'sky'),
+    ...primeRss,
+    ...filmRss,
+    ...skyParsed.filter((x) => !x.isLive && x.slot === 'primetime'),
+  ]).slice(0, 22);
+
+  const sportMerged = dedupeLiveItems(sportList).slice(0, 6);
+
+  // Enrich top film/series highlights via TMDB (strictly <= LIVE_TV_TMDB_MAX calls)
+  const enrichTargets = [
+    ...primetimeMerged.filter((x) => x.track === 'sky' || x.shortChannel === 'ARTE HD' || x.shortChannel === '3SAT HD' || x.shortChannel === 'DAS ERSTE' || x.shortChannel === 'ZDF HD'),
+    ...nowMerged.filter((x) => x.track === 'sky' || x.shortChannel === 'ARTE HD' || x.shortChannel === 'ZDFNEO'),
+  ];
+  await enrichLiveHighlights(enrichTargets, env);
+
+  // Propagate enriched TMDB metadata across duplicate title appearances
+  const tmdbByTitle = new Map();
+  for (const it of enrichTargets) {
+    if (it.tmdbId) tmdbByTitle.set(it.title.toLowerCase(), it);
+  }
+  for (const it of [...nowMerged, ...primetimeMerged]) {
+    if (!it.tmdbId) {
+      const hit = tmdbByTitle.get(it.title.toLowerCase());
+      if (hit) {
+        it.tmdbId = hit.tmdbId;
+        it.mediaType = hit.mediaType;
+        it.rating = hit.rating;
+        it.posterPath = hit.posterPath;
+        if (hit.imageUrl) it.imageUrl = hit.imageUrl;
+      }
+    }
+  }
+
+  // Curated 8-item mixed spotlight across all 3 tracks (Sat · Magenta · Sky)
+  const spotlight = dedupeLiveItems([
+    ...nowMerged.filter((x) => x.track === 'sky').slice(0, 1),
+    ...primetimeMerged.filter((x) => x.track === 'sky').slice(0, 1),
+    ...nowMerged.filter((x) => x.track === 'sat').slice(0, 1),
+    ...primetimeMerged.filter((x) => x.track === 'sat').slice(0, 2),
+    ...nowMerged.filter((x) => x.track === 'magenta').slice(0, 1),
+    ...primetimeMerged.filter((x) => x.track === 'magenta').slice(0, 1),
+    ...sportMerged.slice(0, 1),
+    ...primetimeMerged,
+    ...nowMerged,
+  ]).slice(0, 10);
+
+  const hasAny = spotlight.length > 0 || nowMerged.length > 0 || primetimeMerged.length > 0;
+  if (!hasAny && cached) {
+    return jsonResponse({ ...cached, cached: true, stale: true });
+  }
+
+  const payload = {
+    ok: true,
+    generatedAt: nowMs,
+    spotlight,
+    now: nowMerged,
+    primetime: primetimeMerged,
+    sport: sportMerged,
+  };
+
+  if (hasAny) {
+    try {
+      await kvPut(env, LIVE_TV_KV_KEY, JSON.stringify(payload));
+    } catch {
+      // non-fatal cache write failure
+    }
+  }
+
+  return jsonResponse({ ...payload, cached: false });
 }
 
 
