@@ -172,7 +172,7 @@ function loadAppContext({ platform = 'MacIntel', maxTouchPoints = 0 } = {}) {
   return context;
 }
 
-test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v8-Cache)', () => {
+test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v9-Cache)', () => {
   assert.match(HTML_SRC, /id="tabList"/);
   assert.match(HTML_SRC, /id="tabDiscover"/);
   assert.match(HTML_SRC, /id="tabLiveNow"/);
@@ -183,10 +183,10 @@ test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveVie
   assert.match(CSS_SRC, /\.live-view/);
   assert.match(CSS_SRC, /#app\.view-live #watchlist/);
   assert.match(CSS_SRC, /#app\.view-primetime #watchlist/);
-  assert.match(SW_SRC, /CACHE_VERSION = 'v8'/);
+  assert.match(SW_SRC, /CACHE_VERSION = 'v9'/);
 });
 
-test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt nach Paket B (10 Sender) und rendern echte skygo://-Anchors', () => {
+test('buildLiveNowItems und buildPrimetimeItems pinnen ARD #1 + ZDF #2 nach vorne und verlinken Direkt-Streams (RTL+, Joyn, ARD CRID, Sky Go)', () => {
   const ctx = loadAppContext({ platform: 'MacIntel', maxTouchPoints: 0 });
   const sampleLive = {
     ok: true,
@@ -200,6 +200,45 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
         startTime: '14:30',
         endTime: '15:20',
         isLive: true,
+      },
+      {
+        id: 'sky_ssn_now',
+        channel: 'Sky Sport News',
+        shortChannel: 'SKY SPORT NEWS',
+        track: 'sky',
+        trackLabel: 'SKY · 200',
+        badge: 'SKY',
+        title: 'Sky Sport News Live',
+        startTime: '14:00',
+        endTime: '15:30',
+        isLive: true,
+        progressPct: 50,
+        webUrl: 'https://www.sky.de/tvguide',
+        mediathekServiceId: 'sky',
+      },
+      {
+        id: 'mag_pro7_now',
+        channel: 'ProSieben',
+        shortChannel: 'PROSIEBEN',
+        track: 'magenta',
+        title: 'taff',
+        startTime: '14:00',
+        endTime: '15:00',
+        isLive: true,
+        progressPct: 40,
+        imageUrl: 'https://example.test/p7.jpg',
+        rating: 8.1,
+      },
+      {
+        id: 'sat_zdf_now',
+        channel: 'ZDF',
+        shortChannel: 'ZDF HD',
+        track: 'sat',
+        title: 'heute',
+        startTime: '14:00',
+        endTime: '14:15',
+        isLive: true,
+        progressPct: 20,
       },
       {
         id: 'sat_ard_1430',
@@ -225,21 +264,6 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
         startTime: '14:15',
         endTime: '15:55',
         isLive: true,
-      },
-      {
-        id: 'sky_ssn_now',
-        channel: 'Sky Sport News',
-        shortChannel: 'SKY SPORT NEWS',
-        track: 'sky',
-        trackLabel: 'SKY · 200',
-        badge: 'SKY',
-        title: 'Sky Sport News Live',
-        startTime: '14:00',
-        endTime: '15:30',
-        isLive: true,
-        progressPct: 50,
-        webUrl: 'https://www.sky.de/tvguide',
-        mediathekServiceId: 'sky',
       },
     ],
     primetime: [
@@ -280,21 +304,18 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
         isLive: false,
       },
       {
-        id: 'sat_ard_2015',
-        channel: 'Das Erste',
-        shortChannel: 'DAS ERSTE',
-        track: 'sat',
-        trackLabel: 'SAT HD',
-        badge: 'SAT',
-        title: 'Die Kanzlei',
-        startTime: '20:15',
-        endTime: '21:00',
+        id: 'sky_f1_2000',
+        channel: 'Sky Sport F1',
+        shortChannel: 'SKY SPORT F1',
+        track: 'sky',
+        trackLabel: 'SKY · 207',
+        badge: 'SKY',
+        title: 'Formel 1: Großer Preis der USA',
+        startTime: '20:00',
+        endTime: '22:00',
         isLive: false,
-        tmdbId: 65432,
-        mediaType: 'tv',
-        rating: 7.4,
-        webUrl: 'https://www.ardmediathek.de/live',
-        mediathekServiceId: 'ard',
+        webUrl: 'https://www.sky.de/tvguide',
+        mediathekServiceId: 'sky',
       },
       {
         id: 'mag_rtl_2015',
@@ -310,18 +331,44 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
         webUrl: 'https://web.magentatv.de/tv-guide',
       },
       {
-        id: 'sky_f1_2000',
-        channel: 'Sky Sport F1',
-        shortChannel: 'SKY SPORT F1',
-        track: 'sky',
-        trackLabel: 'SKY · 207',
-        badge: 'SKY',
-        title: 'Formel 1: Großer Preis der USA',
-        startTime: '20:00',
-        endTime: '22:00',
+        id: 'mag_sat1_2015',
+        channel: 'Sat.1',
+        shortChannel: 'SAT.1 HD',
+        track: 'magenta',
+        title: 'Navy CIS',
+        startTime: '20:15',
+        endTime: '21:15',
         isLive: false,
-        webUrl: 'https://www.sky.de/tvguide',
-        mediathekServiceId: 'sky',
+        tmdbId: 4614,
+        mediaType: 'tv',
+        rating: 7.6,
+      },
+      {
+        id: 'sat_zdf_2015',
+        channel: 'ZDF',
+        shortChannel: 'ZDF HD',
+        track: 'sat',
+        title: 'Die Geschichte der Deutschen',
+        startTime: '20:15',
+        endTime: '21:00',
+        isLive: false,
+      },
+      {
+        id: 'sat_ard_2015',
+        channel: 'Das Erste',
+        shortChannel: 'DAS ERSTE',
+        track: 'sat',
+        trackLabel: 'SAT HD',
+        badge: 'SAT',
+        title: 'Die Kanzlei',
+        startTime: '20:15',
+        endTime: '21:00',
+        isLive: false,
+        tmdbId: 65432,
+        mediaType: 'tv',
+        rating: 7.4,
+        webUrl: 'https://www.ardmediathek.de/live',
+        mediathekServiceId: 'ard',
       },
     ],
     sport: [
@@ -352,31 +399,30 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
 
   const berlin1440 = new Date('2026-11-17T13:40:00Z'); // 14:40 Europe/Berlin
   vm.runInContext(`
-    items = [{ id: 'wl1', tmdbId: 65432, type: 'tv', title: 'Die Kanzlei', watched: false }];
+    items = [{ id: 'wl1', tmdbId: 4614, type: 'tv', title: 'Navy CIS', watched: false }];
     liveTvData = ${JSON.stringify(sampleLive)};
   `, ctx);
 
   const nowItems = ctx.buildLiveNowItems(sampleLive, berlin1440);
   const primeItems = ctx.buildPrimetimeItems(sampleLive, berlin1440);
 
-  // Paket B: WDR und Sky Cinema Premiere sind raus; ARD, Sky Sport News und heutige Bundesliga sind drin
+  // Paket B: WDR und Sky Cinema Premiere sind raus; ARD #1 und ZDF #2 IMMER ganz vorne (auch ohne Bild/Rating!)
   assert.equal(nowItems.some((x) => x.channel === 'WDR' || /sky cinema/i.test(x.channel)), false);
-  assert.equal(nowItems.some((x) => x.channel === 'Das Erste' && x.title === 'Wer weiß denn sowas?'), true);
-  assert.equal(nowItems.some((x) => x.channel === 'Sky Sport News'), true);
+  assert.equal(nowItems[0].channel, 'Das Erste');
+  assert.equal(nowItems[1].channel, 'ZDF');
   assert.equal(nowItems.some((x) => x.title === '2. Bundesliga live'), true);
 
-  // 20:15: 3sat, VOX, Kinowelt, ZDF 22:20 und Sport von anderem Datum (20.11.) sind raus; Watchlist-Treffer (Die Kanzlei) zuerst
+  // 20:15: 3sat, VOX, Kinowelt, ZDF 22:20 und Sport von anderem Datum (20.11.) sind raus; ARD #1 und ZDF #2 auch hier vorne vor Sky/Sat.1-Watchlist!
   assert.equal(primeItems.some((x) => /3sat|vox|kinowelt/i.test(x.channel)), false);
   assert.equal(primeItems.some((x) => x.title === 'Spätfilm' || x.title.includes('Bayern')), false);
-  assert.equal(primeItems[0].title, 'Die Kanzlei');
-  assert.equal(primeItems.some((x) => x.channel === 'RTL'), true);
-  assert.equal(primeItems.some((x) => x.channel === 'Sky Sport F1'), true);
+  assert.equal(primeItems[0].channel, 'Das Erste');
+  assert.equal(primeItems[1].channel, 'ZDF');
 
   ctx.updateViewCounts(berlin1440);
   assert.equal(ctx._getEl('tabLiveCount').textContent, String(nowItems.length));
   assert.equal(ctx._getEl('tabPrimeCount').textContent, String(primeItems.length));
 
-  // macOS Desktop: echte <a href="skygo://" data-sky-copy="..."> Anchors in BEIDEN Tabs (● Live & 20:15), ohne target="_blank"
+  // macOS Desktop: echte Direkt-Links (ARD CRID, ZDF, RTL+, Joyn) + <a href="skygo://" data-sky-live-ch="..."> in BEIDEN Tabs
   ctx.switchMainView('primetime');
   ctx.renderLiveView(berlin1440);
   const primeHtml = ctx._getEl('liveView').innerHTML;
@@ -385,7 +431,11 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
   assert.match(primeHtml, /Heute ab 20:15 Uhr/);
   assert.match(primeHtml, /★ Watchlist/);
   assert.match(primeHtml, /▶ Trailer/);
-  assert.match(primeHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Formel 1: Großer Preis der USA"/);
+  assert.match(primeHtml, /href="https:\/\/www\.ardmediathek\.de\/live\/Y3JpZDovL2Rhc2Vyc3Rl/);
+  assert.match(primeHtml, /href="https:\/\/www\.zdf\.de\/live-tv"/);
+  assert.match(primeHtml, /href="https:\/\/plus\.rtl\.de\/rtl\/live"[^>]*>▶ RTL\+ Live ↗<\/a>/);
+  assert.match(primeHtml, /href="https:\/\/www\.joyn\.de\/play\/live-tv\?channel_id=139"[^>]*>JOYN ↗<\/a>/);
+  assert.match(primeHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport F1" data-sky-live-ch="Sky Sport F1"/);
   assert.doesNotMatch(primeHtml, /href="skygo:\/\/"[^>]*target="_blank"/);
 
   ctx.switchMainView('live');
@@ -393,10 +443,14 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
   const liveHtml = ctx._getEl('liveView').innerHTML;
   assert.equal(ctx._getEl('app').classList.contains('view-live'), true);
   assert.match(liveHtml, /Jetzt live im TV/);
-  assert.match(liveHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport News Live"/);
-  assert.match(liveHtml, /ARD Livestream ↗/);
+  assert.match(liveHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport News" data-sky-live-ch="Sky Sport News"[^>]*>▶ Sky Go starten ↗<\/a>/);
+  assert.match(liveHtml, /href="https:\/\/www\.ardmediathek\.de\/live\/Y3JpZDovL2Rhc2Vyc3Rl[^>]*>▶ Das Erste Live ↗<\/a>/);
+  assert.match(liveHtml, /href="https:\/\/www\.zdf\.de\/live-tv"[^>]*>▶ ZDF Live ↗<\/a>/);
+  assert.match(liveHtml, /href="https:\/\/www\.joyn\.de\/play\/live-tv\?channel_id=138"[^>]*>▶ ProSieben Live \(Joyn\) ↗<\/a>/);
 
-  // Spur-Filter funktioniert weiter
+  // Spur-Filter funktioniert weiter mit neuen klaren Chip-Labels
+  assert.match(liveHtml, /ARD &amp; ZDF/);
+  assert.match(liveHtml, /RTL\+ &amp; Joyn/);
   vm.runInContext(`activeLiveTrackFilter = 'sat'; renderLiveView(new Date('2026-11-17T13:40:00Z'));`, ctx);
   assert.doesNotMatch(ctx._getEl('liveView').innerHTML, /Sky Sport News Live/);
   assert.match(ctx._getEl('liveView').innerHTML, /Wer weiß denn sowas\?/);
@@ -412,7 +466,7 @@ test('buildLiveNowItems und buildPrimetimeItems trennen Live vs. 20:15 strikt na
   assert.equal(ctx._getEl('liveView').classList.contains('hidden'), true);
 });
 
-test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy vs. iOS Web) und Magenta/Sat per Web-URL', () => {
+test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Sender-Toast vs. iOS Web) und RTL+/Joyn direkt', () => {
   const macCtx = loadAppContext({ platform: 'MacIntel', maxTouchPoints: 0 });
   vm.runInContext(`
     handleLivePrimaryAction({
@@ -423,11 +477,11 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy v
       webUrl: 'https://www.sky.de/tvguide',
     });
   `, macCtx);
-  assert.equal(macCtx._getCopiedText(), 'Topspiel live');
+  assert.equal(macCtx._getCopiedText(), 'Sky Sport Bundesliga');
   assert.equal(macCtx.window.location.href, 'skygo://');
   assert.equal(macCtx._opens.length, 0);
 
-  // nativer $liveView Klick auf a[data-sky-copy] kopiert Titel + Toast und verhindert Default-Navigation NICHT
+  // nativer $liveView Klick auf a[data-sky-copy] kopiert Sender + TV-Guide-Toast und verhindert Default-Navigation NICHT
   macCtx.bindEvents();
   let prevented = false;
   macCtx._getEl('liveView').dispatchEvent({
@@ -435,7 +489,9 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy v
     target: {
       closest(sel) {
         if (sel === 'a[data-sky-copy]') {
-          return { getAttribute: (k) => (k === 'data-sky-copy' ? 'Formel 1: USA' : null) };
+          return {
+            getAttribute: (k) => (k === 'data-sky-copy' ? 'Sky Sport F1' : k === 'data-sky-live-ch' ? 'Sky Sport F1' : null),
+          };
         }
         return null;
       },
@@ -443,8 +499,8 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy v
     preventDefault() { prevented = true; },
   });
   assert.equal(prevented, false);
-  assert.equal(macCtx._getCopiedText(), 'Formel 1: USA');
-  assert.equal(macCtx._toasts.some((t) => t.msg.includes('Formel 1: USA') && t.msg.includes('⌘V')), true);
+  assert.equal(macCtx._getCopiedText(), 'Sky Sport F1');
+  assert.equal(macCtx._toasts.some((t) => t.msg.includes('TV Guide') && t.msg.includes('Sky Sport F1')), true);
 
   // Magazin-Detail (✦ Fuer dich) rendert auf macOS bei Sky ebenfalls nativen skygo://-Anchor
   vm.runInContext(`
@@ -471,8 +527,15 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Copy v
       title: 'Wer wird Millionär?',
       webUrl: 'https://web.magentatv.de/tv-guide',
     });
+    handleLivePrimaryAction({
+      id: 'mag2',
+      channel: 'Sat.1',
+      track: 'magenta',
+      title: 'Navy CIS',
+    });
   `, iosCtx);
-  assert.equal(iosCtx._opens.length, 2);
+  assert.equal(iosCtx._opens.length, 3);
   assert.equal(iosCtx._opens[0].url, 'https://www.sky.de/tvguide');
-  assert.equal(iosCtx._opens[1].url, 'https://web.magentatv.de/tv-guide');
+  assert.equal(iosCtx._opens[1].url, 'https://plus.rtl.de/rtl/live');
+  assert.equal(iosCtx._opens[2].url, 'https://www.joyn.de/play/live-tv?channel_id=139');
 });
