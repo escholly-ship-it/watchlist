@@ -2133,7 +2133,7 @@ function resolveChannelMeta(rawChannel) {
       mediathekServiceId: info.mediathekServiceId,
     };
   }
-  if (key.startsWith('sky') || key.includes('warner tv') || key.includes('kinowelt')) {
+  if (/^(sky\s+(cinema|atlantic|showcase|one|replay|krimi|crime|documentaries|nature|sport)|warner tv\b)/i.test(clean)) {
     return {
       channel: clean.replace(/^sky\s+/i, 'Sky '),
       shortChannel: clean.toUpperCase().slice(0, 14),
@@ -2144,15 +2144,7 @@ function resolveChannelMeta(rawChannel) {
       mediathekServiceId: 'sky',
     };
   }
-  return {
-    channel: clean,
-    shortChannel: clean.toUpperCase().slice(0, 14),
-    track: 'sat',
-    trackLabel: 'SAT HD',
-    badge: 'SAT',
-    webUrl: 'https://www.ardmediathek.de/live',
-    mediathekServiceId: null,
-  };
+  return null;
 }
 
 function decodeXmlEntities(str) {
@@ -2232,6 +2224,7 @@ function parseTvSpielfilmRss(xmlText, slot, nowMin) {
     const encMatch = block.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
     const imageUrl = encMatch ? upgradeTvSpielfilmImg(decodeXmlEntities(encMatch[1])) : '';
     const meta = resolveChannelMeta(rawChannel);
+    if (!meta) continue;
     const isLive = slot === 'now';
     const progressPct = isLive ? computeProgressPct(startTime, '', nowMin, true) : 0;
     const idSlug = `${meta.track}_${meta.shortChannel}_${startTime}_${title}`
@@ -2282,6 +2275,7 @@ function parseSkyChannelHtml(html, channelName, slotHint, nowMin) {
     const isLive = startMin !== null && endMin !== null && cur >= startMin && cur < endMin;
     const progressPct = isLive ? computeProgressPct(startTime, endTime, nowMin, true) : 0;
     const meta = resolveChannelMeta(channelName);
+    if (!meta) continue;
     const isEvening = startMin !== null && startMin >= 19 * 60 + 45;
     const slot = slotHint === 'sport' ? 'sport' : (isLive ? 'now' : 'primetime');
 
@@ -2468,11 +2462,22 @@ async function handleLiveTv(env, url) {
     ...nowRss,
   ]).slice(0, 20);
 
+  const filmPrimetime = filmRss.filter((x) => {
+    const m = parseHhMmToMinutes(x.startTime);
+    return m !== null && m >= 19 * 60 + 45 && m <= 21 * 60 + 15;
+  });
+
   const primetimeMerged = dedupeLiveItems([
-    ...filmRss.filter((x) => x.track === 'sky'),
-    ...primeRss,
-    ...filmRss,
-    ...skyParsed.filter((x) => !x.isLive && x.slot === 'primetime'),
+    ...filmPrimetime.filter((x) => x.track === 'sky'),
+    ...primeRss.filter((x) => {
+      const m = parseHhMmToMinutes(x.startTime);
+      return m === null || (m >= 19 * 60 + 45 && m <= 21 * 60 + 15);
+    }),
+    ...filmPrimetime,
+    ...skyParsed.filter((x) => {
+      const m = parseHhMmToMinutes(x.startTime);
+      return !x.isLive && x.slot === 'primetime' && m !== null && m >= 19 * 60 + 45 && m <= 21 * 60 + 15;
+    }),
   ]).slice(0, 22);
 
   const sportMerged = dedupeLiveItems(sportList).slice(0, 6);
