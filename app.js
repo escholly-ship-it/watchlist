@@ -2210,19 +2210,6 @@ function bindEvents() {
         renderLiveView();
         return;
       }
-      const skyCta = e.target.closest('a[data-sky-copy]');
-      if (skyCta) {
-        const liveCh = skyCta.getAttribute('data-sky-live-ch');
-        const copyTitle = skyCta.getAttribute('data-sky-copy') || '';
-        if (copyTitle) copyTextToClipboard(copyTitle);
-        showAutoAddToast(
-          liveCh
-            ? `Sky Go startet — im App-Menü „TV Guide“ → ${liveCh} wählen`
-            : (copyTitle ? `„${copyTitle}" kopiert — in Sky Go einfügen (⌘V)` : 'Sky Go wird geöffnet…'),
-          'info',
-        );
-        return;
-      }
       const actBtn = e.target.closest('[data-live-act][data-live-id]');
       if (actBtn) handleLiveCardEvent(actBtn.dataset.liveAct, actBtn.dataset.liveId);
     });
@@ -2358,24 +2345,17 @@ function bindEvents() {
   });
 }
 
-// ---- V1 Live-TV & 20:15 Programm (Getrennte Tabs: Live | 20:15 · Satellit | Magenta HD | Sky) ----
+// ---- V1 Live-TV & 20:15 Programm (Getrennte Tabs: Live | 20:15 · ARD & ZDF | RTL+ & Joyn) ----
 const LIVE_TV_URL = `${WORKER_BASE}/live-tv`;
 let liveTvData = null;
 let liveTvFetching = false;
-let activeLiveTrackFilter = 'all'; // 'all' | 'sat' | 'magenta' | 'sky'
+let activeLiveTrackFilter = 'all'; // 'all' | 'sat' | 'magenta'
 const liveTvIndex = new Map();
 const LIVE_NON_TMDB_RE = /\b(tagesschau|heute\b|wetter|mittagsmagazin|morgenmagazin|nachtmagazin|punkt\s*12|brisant|hallo deutschland|bundesliga|2\.\s*bundesliga|tennis|formel\s*[12]|f1\b|grand prix|doppelpass|sportstudio|nachrichten|teletext|börse|boerse|sky sport|premier league|champions league|europa league|dfb-pokal|länderspiel|laenderspiel|wm-quali|em-quali|atp\b|wta\b|nfl\b|nhl\b|darts|tv total|wer wird millionär|wer weiss denn sowas|wer weiß denn sowas|bauer sucht frau|galileo|newstime|exclusiv|explosiv|zdf magazin|heute-show|maischberger|markus lanz|maybrit illner|hart aber fair|arenal)\b/i;
 
-// Paket B (10 Echt-Live-Sender): ARD, ZDF · RTL, Sat.1, ProSieben · Sky Sport News/Top Event/BL/PL/F1
+// 5 Echt-Live-Sender (Direkt-Streams): ARD, ZDF · RTL, Sat.1, ProSieben
 const LIVE_SAT_ALLOW = new Set(['das erste', 'ard', 'zdf']);
 const LIVE_MAGENTA_ALLOW = new Set(['rtl', 'sat 1', 'sat1', 'prosieben', 'pro7']);
-const LIVE_SKY_PREFIXES = [
-  'sky sport news',
-  'sky sport top event',
-  'sky sport bundesliga',
-  'sky sport premier league',
-  'sky sport f1',
-];
 
 function normalizeLiveChannelName(str) {
   return String(str || '')
@@ -2390,14 +2370,13 @@ function resolveReceivableTrack(it) {
   const raw = String(it.channel || it.shortChannel || '').replace(/\s+/g, ' ').trim();
   const rawLower = raw.toLowerCase();
   if (!rawLower) return null;
-  const cleanSky = rawLower.replace(/\s+(hd|uhd)$/i, '').trim();
-  if (LIVE_SKY_PREFIXES.some((p) => cleanSky.startsWith(p))) return 'sky';
+  const clean = rawLower.replace(/\s+(hd|uhd)$/i, '').trim();
 
   const norm = normalizeLiveChannelName(raw) || normalizeLiveChannelName(it.shortChannel);
-  if (LIVE_SAT_ALLOW.has(norm) || LIVE_SAT_ALLOW.has(cleanSky)) {
+  if (LIVE_SAT_ALLOW.has(norm) || LIVE_SAT_ALLOW.has(clean)) {
     return 'sat';
   }
-  if (LIVE_MAGENTA_ALLOW.has(norm) || LIVE_MAGENTA_ALLOW.has(cleanSky)) {
+  if (LIVE_MAGENTA_ALLOW.has(norm) || LIVE_MAGENTA_ALLOW.has(clean)) {
     return 'magenta';
   }
   return null;
@@ -2494,8 +2473,8 @@ function normalizeLiveItemTrack(it) {
   const resolved = resolveReceivableTrack(it);
   if (!resolved) return null;
   if (it.track === resolved) return it;
-  const trackLabel = resolved === 'sky' ? 'SKY · HDMI 3' : (resolved === 'magenta' ? 'MAGENTA HD' : 'SAT HD');
-  const badge = resolved === 'sky' ? 'SKY' : (resolved === 'magenta' ? 'MAGENTA' : 'SAT');
+  const trackLabel = resolved === 'magenta' ? 'MAGENTA HD' : 'SAT HD';
+  const badge = resolved === 'magenta' ? 'MAGENTA' : 'SAT';
   return { ...it, track: resolved, trackLabel, badge };
 }
 
@@ -2530,14 +2509,9 @@ function liveChannelRank(it) {
   const ch = liveChannelKey(it);
   if (ch === 'das erste' || ch === 'ard') return 1;
   if (ch === 'zdf') return 2;
-  if (ch.startsWith('sky sport news')) return 3;
-  if (ch.startsWith('sky sport top event')) return 4;
-  if (ch.startsWith('sky sport bundesliga')) return 5;
-  if (ch.startsWith('sky sport premier league') || ch.startsWith('sky premier l')) return 6;
-  if (ch.startsWith('sky sport f1')) return 7;
-  if (ch === 'rtl') return 8;
-  if (ch === 'sat.1' || ch === 'sat 1' || ch === 'sat1') return 9;
-  if (ch === 'prosieben' || ch === 'pro7') return 10;
+  if (ch === 'rtl') return 3;
+  if (ch === 'sat.1' || ch === 'sat 1' || ch === 'sat1') return 4;
+  if (ch === 'prosieben' || ch === 'pro7') return 5;
   return 99;
 }
 
@@ -2558,15 +2532,6 @@ function resolveLiveWebTarget(it) {
   }
   if (ch === 'prosieben' || ch === 'pro7') {
     return { track: 'magenta', url: 'https://www.joyn.de/play/live-tv?channel_id=138', label: '▶ ProSieben Live (Joyn) ↗', badge: 'JOYN', fallbackTag: 'Joyn Live (Free)' };
-  }
-  if (track === 'sky') {
-    return {
-      track: 'sky',
-      url: 'https://www.sky.de/tvguide',
-      label: isMacDesktop() ? '▶ Sky Go starten ↗' : 'Sky Guide ↗',
-      badge: 'SKY',
-      fallbackTag: 'Sky Stream · HDMI 3',
-    };
   }
   return {
     track,
@@ -2628,14 +2593,8 @@ function liveStreamButtonLabel(it) {
 function renderLiveOpenAnchorHtml(it, { secBtn = false, ariaLabel = '' } = {}) {
   const target = resolveLiveWebTarget(it);
   const track = target.track || 'sat';
-  const trackCls = track === 'sky' ? ' track-sky' : track === 'magenta' ? ' track-magenta' : '';
+  const trackCls = track === 'magenta' ? ' track-magenta' : '';
   const cls = secBtn ? 'live-sec-btn' : `live-cta-btn${trackCls}`;
-  if (track === 'sky' && isMacDesktop()) {
-    const liveCh = it?.channel || it?.shortChannel || 'Sky Sport';
-    const label = secBtn ? 'Sky Go ↗' : target.label;
-    const aria = ariaLabel || `Sky Go starten für ${liveCh}`;
-    return `<a class="${cls}" href="skygo://" data-sky-copy="${escAttr(liveCh)}" data-sky-live-ch="${escAttr(liveCh)}" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
-  }
   const label = secBtn ? `${target.badge} ↗` : target.label;
   const aria = ariaLabel || `${it.channel || 'Sender'} direkt im Browser öffnen`;
   return `<a class="${cls}" href="${escAttr(target.url)}" target="_blank" rel="noopener" aria-label="${escAttr(aria)}">${esc(label)}</a>`;
@@ -2673,9 +2632,9 @@ function renderLiveCardHtml(it, { viewMode = 'live', nowMin = 0, primetimeTunabl
     : '';
 
   const nonMovie = LIVE_NON_TMDB_RE.test(it.title || '');
-  const allowAdd = !!matchedItem || (track !== 'sky' && !!it.tmdbId && !nonMovie);
-  const allowTrailer = !!it.tmdbId || (track !== 'sky' && !nonMovie);
-  const chFallbackTag = webTarget.fallbackTag || (track === 'sky' ? 'Sky Stream · HDMI 3' : 'Satellit · Free-TV HD');
+  const allowAdd = !!matchedItem || (!!it.tmdbId && !nonMovie);
+  const allowTrailer = !!it.tmdbId || !nonMovie;
+  const chFallbackTag = webTarget.fallbackTag || 'Satellit · Free-TV HD';
 
   let actionsHtml = '';
   if (viewMode === 'primetime' && !primetimeTunable) {
@@ -2744,7 +2703,7 @@ function renderLiveView(nowDate = new Date()) {
             ${viewMode === 'live' ? '<span class="live-pulse-dot" aria-hidden="true"></span>' : ''}
             <h2 class="live-view-title">${viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr'}</h2>
           </div>
-          <span class="live-view-sub">${liveTvFetching ? 'Programm wird geladen…' : 'Direkt-Streams: ARD & ZDF · Sky Sport · RTL+ & Joyn'}</span>
+          <span class="live-view-sub">${liveTvFetching ? 'Programm wird geladen…' : 'Direkt-Streams: ARD & ZDF · RTL+ & Joyn'}</span>
         </div>
         <button class="live-view-refresh" type="button" data-live-refresh="1"${liveTvFetching ? ' disabled' : ''}>↻ Aktualisieren</button>
       </div>
@@ -2758,22 +2717,20 @@ function renderLiveView(nowDate = new Date()) {
 
   const satCnt = baseList.filter((x) => x.track === 'sat').length;
   const magCnt = baseList.filter((x) => x.track === 'magenta').length;
-  const skyCnt = baseList.filter((x) => x.track === 'sky').length;
 
-  const trackFilter = activeLiveTrackFilter || 'all';
+  const trackFilter = (activeLiveTrackFilter === 'sat' || activeLiveTrackFilter === 'magenta') ? activeLiveTrackFilter : 'all';
   const filtered = trackFilter === 'all' ? baseList : baseList.filter((x) => x.track === trackFilter);
   const matchCount = filtered.filter((x) => isLiveItemOnWatchlist(x)).length;
 
   const headingTitle = viewMode === 'live' ? 'Jetzt live im TV' : 'Heute ab 20:15 Uhr';
   const baseSub = viewMode === 'live'
-    ? 'Laufende Sendungen · ARD & ZDF · Sky Sport · RTL+ & Joyn'
+    ? 'Laufende Sendungen · ARD & ZDF · RTL+ & Joyn'
     : (primetimeTunable ? 'Abendprogramm läuft — direkt einschalten oder vormerken' : 'Abendprogramm — Direkt-Streams & Highlights ab 20:15 Uhr');
   const subText = matchCount > 0 ? `${matchCount}× auf deiner Watchlist · ${baseSub}` : baseSub;
 
   const filterChips = [
     { id: 'all', label: `Alle (${baseList.length})` },
     { id: 'sat', label: `ARD & ZDF (${satCnt})` },
-    { id: 'sky', label: `Sky Sport (${skyCnt})` },
     { id: 'magenta', label: `RTL+ & Joyn (${magCnt})` },
   ].map((c) => {
     const isAct = trackFilter === c.id;
@@ -2802,22 +2759,6 @@ function renderLiveView(nowDate = new Date()) {
 function handleLivePrimaryAction(item) {
   if (!item) return;
   const target = resolveLiveWebTarget(item);
-  if (target.track === 'sky') {
-    if (isMacDesktop()) {
-      const ch = item.channel || item.shortChannel || item.title || '';
-      if (ch) copyTextToClipboard(ch);
-      showAutoAddToast(
-        ch ? `Sky Go startet — im App-Menü „TV Guide“ → ${ch} wählen` : 'Sky Go wird geöffnet…',
-        'info',
-      );
-      try {
-        window.location.href = 'skygo://';
-      } catch (_) {}
-      return;
-    }
-    window.open(target.url || 'https://www.sky.de/tvguide', '_blank', 'noopener,noreferrer');
-    return;
-  }
   window.open(target.url || item.webUrl, '_blank', 'noopener,noreferrer');
 }
 

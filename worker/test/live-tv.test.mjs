@@ -1,4 +1,4 @@
-// Tests fuer GET /live-tv (Auth, Paket B 10-Sender-Filter, HTML Joyn-Skip & 20:15-Auswahl, KV-Cache live_tv:v2)
+// Tests fuer GET /live-tv (Auth, 5 Direkt-Stream-Sender ohne Sky, HTML Joyn-Skip & 20:15-Auswahl, KV-Cache live_tv:v3)
 // Lauf: node --test worker/test/live-tv.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -216,7 +216,7 @@ test('GET /live-tv verlangt bekannten X-API-Key', async () => {
   assert.equal(resBadKey.status, 401);
 });
 
-test('GET /live-tv filtert strikt Paket B (10 Sender), ueberspringt Joyn-Icon & Vorlauf und nutzt live_tv:v2 Cache', async () => {
+test('GET /live-tv filtert strikt die 5 Direkt-Stream-Sender ohne Sky, ueberspringt Joyn-Icon & Vorlauf und nutzt live_tv:v3 Cache', async () => {
   const { e, kv } = makeEnv();
   const fetched = mockLiveSources();
 
@@ -230,11 +230,6 @@ test('GET /live-tv filtert strikt Paket B (10 Sender), ueberspringt Joyn-Icon & 
   const ardNow = body1.now.find((x) => x.channel === 'Das Erste');
   const ardPrime = body1.primetime.find((x) => x.channel === 'Das Erste');
   const rtlPrime = body1.primetime.find((x) => x.channel === 'RTL');
-  const buliLive = body1.now.find((x) => x.channel === 'Sky Sport Bundesliga');
-  const buliPrime = body1.primetime.find((x) => x.channel === 'Sky Sport Bundesliga');
-  const f1Prime = body1.primetime.find((x) => x.channel === 'Sky Sport F1');
-  const plPrime = body1.primetime.find((x) => x.channel === 'Sky Sport Premier League');
-  const bl1 = body1.sport.find((x) => x.title.includes('Bayern'));
 
   // Joyn-Icon-Anchor darf Titel nicht leeren
   assert.equal(ardNow.title, 'Wer weiß denn sowas?');
@@ -245,22 +240,16 @@ test('GET /live-tv filtert strikt Paket B (10 Sender), ueberspringt Joyn-Icon & 
   assert.equal(rtlPrime.title, 'Wer wird Millionär?');
   assert.equal(rtlPrime.track, 'magenta');
 
-  // Alle 5 Sky-Sport-Kanaele inkl. 19:30-21:30 Bundesliga sind im Live/20:15-Strom; kein Sky-TMDB-Call
-  assert.equal(buliLive.title, 'Fußball: Bundesliga live');
-  assert.equal(buliPrime.title, 'Fußball: Bundesliga Topspiel');
-  assert.equal(buliPrime.startTime, '19:30');
-  assert.equal(f1Prime.title, 'Formel 1: Großer Preis der USA');
-  assert.equal(plPrime.title, 'Fußball: Premier League');
-  assert.ok(bl1);
+  // Sky Sport, Sky Cinema, Arte, VOX und Kinowelt TV sind komplett ausgeschlossen; sport: [] bleibt kompatibel
+  assert.deepEqual(body1.sport, []);
+  assert.equal(allItems.some((x) => /arte|vox|kinowelt|sky/i.test(x.channel)), false);
+  assert.equal(fetched.some((u) => u.includes('openligadb')), false);
+  assert.ok(kv.has('live_tv:v3'));
 
-  // Paket B: Arte, VOX, Sky Cinema Premiere und Kinowelt TV sind komplett ausgeschlossen
-  assert.equal(allItems.some((x) => /arte|vox|kinowelt|sky cinema/i.test(x.channel)), false);
-  assert.ok(kv.has('live_tv:v2'));
-
-  // TMDB wird NICHT fuer Wer wird Millionaer oder Sky Sport gerufen -> exakt <= 1 TMDB Call (Die Kanzlei)
+  // TMDB wird NICHT fuer Wer wird Millionaer gerufen -> exakt 1 TMDB Call (Die Kanzlei)
   const tmdbSearches = fetched.filter((u) => u.includes('search/multi'));
   assert.equal(tmdbSearches.length, 1);
-  assert.ok(fetched.length <= 16, `Subrequests kompakt (${fetched.length})`);
+  assert.ok(fetched.length <= 11, `Subrequests kompakt (${fetched.length})`);
 
   // Zweiter Aufruf komplett aus KV-Cache (0 neue Fetches!)
   const callsAfterFirst = fetched.length;

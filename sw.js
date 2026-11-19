@@ -9,7 +9,8 @@
 // v7 (V1 Live-TV & 20:15 Tabs): 4-Tab-Navigation, strikte Empfangsweg-Filterung
 // v8 (Paket B + Sky Go Anchor): 10 Echt-Live-Sender, nativer skygo://-Link in Live/20:15 & Magazin
 // v9 (Direkt-Streams + ARD/ZDF vorne): RTL+/Joyn/ARD CRID Live-Links, feste Sender-Sortierung
-const CACHE_VERSION = 'v9';
+// v10 (Live-TV ohne Sky): 5 Direkt-Stream-Sender (ARD, ZDF, RTL+, Joyn) — Sky Go bleibt in Merkliste & Für dich
+const CACHE_VERSION = 'v10';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 
