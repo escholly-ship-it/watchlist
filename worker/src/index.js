@@ -2038,10 +2038,10 @@ function pickFanOf(c, tasteSample) {
 
 
 // ─────────────────────────────────────────────────────────────────────────
-// Live-TV & 20:15 3-Spur-EPG (Paket B: 10 Echt-Live-Sender)
+// Live-TV & 20:15 2-Spur-EPG (5 Echt-Live-Sender mit Direkt-Streams)
 // ─────────────────────────────────────────────────────────────────────────
 
-const LIVE_TV_KV_KEY = 'live_tv:v2';
+const LIVE_TV_KV_KEY = 'live_tv:v3';
 const LIVE_TV_TTL_MS = 10 * 60 * 1000;
 const LIVE_TV_FORCE_COOLDOWN_MS = 30 * 1000;
 const LIVE_TV_FETCH_TIMEOUT_MS = 4500;
@@ -2051,11 +2051,6 @@ const LIVE_TV_BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Appl
 const LIVE_TV_CURATED_CHANNELS = [
   { channel: 'Das Erste', aliases: ['das erste', 'ard', 'das erste hd'], shortChannel: 'DAS ERSTE', slug: 'das-erste,ARD.html', track: 'sat', trackLabel: 'SAT HD', badge: 'ARD', webUrl: 'https://www.ardmediathek.de/live/Y3JpZDovL2Rhc2Vyc3RlLmRlL2xpdmUvY2xpcC9hYmNhMDdhMy0zNDc2LTQ4NTEtYjE2Mi1mZGU4ZjY0NmQ0YzQ', mediathekServiceId: 'ard', kind: 'general' },
   { channel: 'ZDF', aliases: ['zdf', 'zdf hd'], shortChannel: 'ZDF HD', slug: 'zdf,ZDF.html', track: 'sat', trackLabel: 'SAT HD', badge: 'ZDF', webUrl: 'https://www.zdf.de/live-tv', mediathekServiceId: 'zdf', kind: 'general' },
-  { channel: 'Sky Sport Bundesliga', aliases: ['sky sport bundesliga', 'sky sport bundesliga hd'], shortChannel: 'SKY BUNDESLIGA', slug: 'sky-sport-bundesliga,BULI.html', track: 'sky', trackLabel: 'SKY · 202', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
-  { channel: 'Sky Sport Top Event', aliases: ['sky sport top event', 'sky sport top event hd'], shortChannel: 'SKY TOP EVENT', slug: 'sky-sport-top-event,SKYSTE.html', track: 'sky', trackLabel: 'SKY · 201', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
-  { channel: 'Sky Sport News', aliases: ['sky sport news', 'sky sport news hd'], shortChannel: 'SKY SPORT NEWS', slug: 'sky-sport-news,SNHD.html', track: 'sky', trackLabel: 'SKY · 200', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
-  { channel: 'Sky Sport Premier League', aliases: ['sky sport premier league', 'sky sport premier league hd'], shortChannel: 'SKY PREMIER L.', slug: 'sky-sport-premier-league,SKYSPL.html', track: 'sky', trackLabel: 'SKY · 203', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
-  { channel: 'Sky Sport F1', aliases: ['sky sport f1', 'sky sport f1 hd'], shortChannel: 'SKY SPORT F1', slug: 'sky-sport-f1,SKYF1.html', track: 'sky', trackLabel: 'SKY · 207', badge: 'SKY', webUrl: 'https://www.sky.de/tvguide', mediathekServiceId: 'sky', kind: 'sport' },
   { channel: 'RTL', aliases: ['rtl', 'rtl hd'], shortChannel: 'RTL HD', slug: 'rtl,RTL.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'RTL+', webUrl: 'https://plus.rtl.de/rtl/live', mediathekServiceId: 'rtl', kind: 'general' },
   { channel: 'Sat.1', aliases: ['sat.1', 'sat1', 'sat 1', 'sat.1 hd'], shortChannel: 'SAT.1 HD', slug: 'sat1,SAT1.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'JOYN', webUrl: 'https://www.joyn.de/play/live-tv?channel_id=139', mediathekServiceId: 'joyn', kind: 'general' },
   { channel: 'ProSieben', aliases: ['prosieben', 'pro7', 'prosieben hd'], shortChannel: 'PROSIEBEN', slug: 'prosieben,PRO7.html', track: 'magenta', trackLabel: 'MAGENTA HD', badge: 'JOYN', webUrl: 'https://www.joyn.de/play/live-tv?channel_id=138', mediathekServiceId: 'joyn', kind: 'general' },
@@ -2384,10 +2379,9 @@ async function handleLiveTv(env, url) {
   }
 
   const nowMin = berlinMinutesNow(new Date(nowMs));
-  const [jetztXml, p2015Xml, bl1Text, ...channelHtmls] = await Promise.all([
+  const [jetztXml, p2015Xml, ...channelHtmls] = await Promise.all([
     fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/jetzt.xml'),
     fetchTextTimeout('https://www.tvspielfilm.de/tv-programm/rss/heute2015.xml'),
-    fetchTextTimeout('https://api.openligadb.de/getmatchdata/bl1'),
     ...LIVE_TV_CURATED_CHANNELS.map((c) => fetchTextTimeout(`https://www.tvspielfilm.de/tv-programm/sendungen/${c.slug}`)),
   ]);
 
@@ -2443,59 +2437,17 @@ async function handleLiveTv(env, url) {
     }),
   ]).slice(0, 15);
 
-  // Next Bundesliga fixture card on Sky Sport Bundesliga (supplemental OpenLigaDB card)
-  const sportList = [];
-  if (bl1Text) {
-    try {
-      const matches = JSON.parse(bl1Text);
-      const nextMatch = Array.isArray(matches)
-        ? matches.find((m) => m && !m.matchIsFinished && m.team1 && m.team2)
-        : null;
-      if (nextMatch) {
-        const t1 = nextMatch.team1.shortName || nextMatch.team1.teamName;
-        const t2 = nextMatch.team2.shortName || nextMatch.team2.teamName;
-        const dtStr = String(nextMatch.matchDateTime || '');
-        const hhmm = dtStr.length >= 16 ? dtStr.slice(11, 16) : '20:30';
-        const dateLabel = dtStr.length >= 10 ? `${dtStr.slice(8, 10)}.${dtStr.slice(5, 7)}.` : '';
-        const meta = resolveChannelMeta('Sky Sport Bundesliga');
-        sportList.push({
-          id: `sky_bl1_${t1}_${t2}`.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
-          ...meta,
-          title: `Bundesliga: ${t1} – ${t2}`,
-          description: `${dateLabel ? dateLabel + ' · ' : ''}${hhmm} Uhr · Live auf Sky Sport Bundesliga`,
-          startTime: hhmm,
-          endTime: '',
-          isLive: false,
-          progressPct: 0,
-          slot: 'sport',
-          imageUrl: '',
-          tmdbId: null,
-          mediaType: null,
-          rating: null,
-          posterPath: null,
-        });
-      }
-    } catch {
-      // ignore invalid OpenLigaDB JSON
-    }
-  }
+  const sportMerged = [];
 
-  const sportMerged = dedupeLiveItems(sportList).slice(0, 4);
-
-  // Enrich only rare non-sport Free-TV movies/series via TMDB (strictly <= 4 calls, never Sky Sport)
-  const enrichTargets = [
-    ...primetimeMerged.filter((x) => x.track !== 'sky'),
-    ...nowMerged.filter((x) => x.track !== 'sky'),
-  ];
+  // Enrich only rare non-sport Free-TV movies/series via TMDB (strictly <= 4 calls)
+  const enrichTargets = [...primetimeMerged, ...nowMerged];
   await enrichLiveHighlights(enrichTargets, env);
 
-  // Curated mixed spotlight across all 3 tracks (Sat · Sky Sport · Magenta)
+  // Curated mixed spotlight across Sat & Magenta
   const spotlight = dedupeLiveItems([
-    ...nowMerged.filter((x) => x.track === 'sky').slice(0, 2),
     ...primetimeMerged.filter((x) => x.track === 'sat').slice(0, 2),
     ...nowMerged.filter((x) => x.track === 'sat').slice(0, 2),
     ...primetimeMerged.filter((x) => x.track === 'magenta').slice(0, 2),
-    ...sportMerged.slice(0, 1),
     ...primetimeMerged,
     ...nowMerged,
   ]).slice(0, 10);

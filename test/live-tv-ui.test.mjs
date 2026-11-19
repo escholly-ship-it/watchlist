@@ -172,7 +172,7 @@ function loadAppContext({ platform = 'MacIntel', maxTouchPoints = 0 } = {}) {
   return context;
 }
 
-test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v9-Cache)', () => {
+test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v10-Cache)', () => {
   assert.match(HTML_SRC, /id="tabList"/);
   assert.match(HTML_SRC, /id="tabDiscover"/);
   assert.match(HTML_SRC, /id="tabLiveNow"/);
@@ -183,10 +183,10 @@ test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveVie
   assert.match(CSS_SRC, /\.live-view/);
   assert.match(CSS_SRC, /#app\.view-live #watchlist/);
   assert.match(CSS_SRC, /#app\.view-primetime #watchlist/);
-  assert.match(SW_SRC, /CACHE_VERSION = 'v9'/);
+  assert.match(SW_SRC, /CACHE_VERSION = 'v10'/);
 });
 
-test('buildLiveNowItems und buildPrimetimeItems pinnen ARD #1 + ZDF #2 nach vorne und verlinken Direkt-Streams (RTL+, Joyn, ARD CRID, Sky Go)', () => {
+test('buildLiveNowItems und buildPrimetimeItems filtern Sky raus, pinnen ARD #1 + ZDF #2 vor RTL/Sat.1/ProSieben und verlinken Direkt-Streams', () => {
   const ctx = loadAppContext({ platform: 'MacIntel', maxTouchPoints: 0 });
   const sampleLive = {
     ok: true,
@@ -406,23 +406,26 @@ test('buildLiveNowItems und buildPrimetimeItems pinnen ARD #1 + ZDF #2 nach vorn
   const nowItems = ctx.buildLiveNowItems(sampleLive, berlin1440);
   const primeItems = ctx.buildPrimetimeItems(sampleLive, berlin1440);
 
-  // Paket B: WDR und Sky Cinema Premiere sind raus; ARD #1 und ZDF #2 IMMER ganz vorne (auch ohne Bild/Rating!)
-  assert.equal(nowItems.some((x) => x.channel === 'WDR' || /sky cinema/i.test(x.channel)), false);
+  // WDR, Sky Cinema Premiere und alle Sky Sport Sender sind raus; ARD #1 und ZDF #2 IMMER ganz vorne vor RTL/Sat.1/ProSieben!
+  assert.equal(nowItems.some((x) => x.channel === 'WDR' || /sky/i.test(x.channel)), false);
   assert.equal(nowItems[0].channel, 'Das Erste');
   assert.equal(nowItems[1].channel, 'ZDF');
-  assert.equal(nowItems.some((x) => x.title === '2. Bundesliga live'), true);
+  assert.equal(nowItems[2].channel, 'ProSieben');
+  assert.equal(nowItems.some((x) => x.title === '2. Bundesliga live'), false);
 
-  // 20:15: 3sat, VOX, Kinowelt, ZDF 22:20 und Sport von anderem Datum (20.11.) sind raus; ARD #1 und ZDF #2 auch hier vorne vor Sky/Sat.1-Watchlist!
-  assert.equal(primeItems.some((x) => /3sat|vox|kinowelt/i.test(x.channel)), false);
+  // 20:15: 3sat, VOX, Kinowelt, Sky Sport F1, ZDF 22:20 und Sport sind raus; Reihenfolge ARD #1, ZDF #2, RTL #3, Sat.1 #4!
+  assert.equal(primeItems.some((x) => /3sat|vox|kinowelt|sky/i.test(x.channel)), false);
   assert.equal(primeItems.some((x) => x.title === 'Spätfilm' || x.title.includes('Bayern')), false);
   assert.equal(primeItems[0].channel, 'Das Erste');
   assert.equal(primeItems[1].channel, 'ZDF');
+  assert.equal(primeItems[2].channel, 'RTL');
+  assert.equal(primeItems[3].channel, 'Sat.1');
 
   ctx.updateViewCounts(berlin1440);
   assert.equal(ctx._getEl('tabLiveCount').textContent, String(nowItems.length));
   assert.equal(ctx._getEl('tabPrimeCount').textContent, String(primeItems.length));
 
-  // macOS Desktop: echte Direkt-Links (ARD CRID, ZDF, RTL+, Joyn) + <a href="skygo://" data-sky-live-ch="..."> in BEIDEN Tabs
+  // macOS Desktop: echte Direkt-Links (ARD CRID, ZDF, RTL+, Joyn) ohne Sky Sport oder skygo:// in BEIDEN Live-Tabs
   ctx.switchMainView('primetime');
   ctx.renderLiveView(berlin1440);
   const primeHtml = ctx._getEl('liveView').innerHTML;
@@ -435,74 +438,48 @@ test('buildLiveNowItems und buildPrimetimeItems pinnen ARD #1 + ZDF #2 nach vorn
   assert.match(primeHtml, /href="https:\/\/www\.zdf\.de\/live-tv"/);
   assert.match(primeHtml, /href="https:\/\/plus\.rtl\.de\/rtl\/live"[^>]*>▶ RTL\+ Live ↗<\/a>/);
   assert.match(primeHtml, /href="https:\/\/www\.joyn\.de\/play\/live-tv\?channel_id=139"[^>]*>JOYN ↗<\/a>/);
-  assert.match(primeHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport F1" data-sky-live-ch="Sky Sport F1"/);
-  assert.doesNotMatch(primeHtml, /href="skygo:\/\/"[^>]*target="_blank"/);
+  assert.doesNotMatch(primeHtml, /Sky Sport/);
+  assert.doesNotMatch(primeHtml, /skygo:\/\//);
 
   ctx.switchMainView('live');
   ctx.renderLiveView(berlin1440);
   const liveHtml = ctx._getEl('liveView').innerHTML;
   assert.equal(ctx._getEl('app').classList.contains('view-live'), true);
   assert.match(liveHtml, /Jetzt live im TV/);
-  assert.match(liveHtml, /<a class="live-cta-btn track-sky" href="skygo:\/\/" data-sky-copy="Sky Sport News" data-sky-live-ch="Sky Sport News"[^>]*>▶ Sky Go starten ↗<\/a>/);
+  assert.doesNotMatch(liveHtml, /Sky Sport/);
+  assert.doesNotMatch(liveHtml, /skygo:\/\//);
   assert.match(liveHtml, /href="https:\/\/www\.ardmediathek\.de\/live\/Y3JpZDovL2Rhc2Vyc3Rl[^>]*>▶ Das Erste Live ↗<\/a>/);
   assert.match(liveHtml, /href="https:\/\/www\.zdf\.de\/live-tv"[^>]*>▶ ZDF Live ↗<\/a>/);
   assert.match(liveHtml, /href="https:\/\/www\.joyn\.de\/play\/live-tv\?channel_id=138"[^>]*>▶ ProSieben Live \(Joyn\) ↗<\/a>/);
 
-  // Spur-Filter funktioniert weiter mit neuen klaren Chip-Labels
+  // Spur-Filter hat genau Alle, ARD & ZDF sowie RTL+ & Joyn (ohne Sky Sport)
   assert.match(liveHtml, /ARD &amp; ZDF/);
   assert.match(liveHtml, /RTL\+ &amp; Joyn/);
+  assert.doesNotMatch(liveHtml, /data-live-track="sky"/);
   vm.runInContext(`activeLiveTrackFilter = 'sat'; renderLiveView(new Date('2026-11-17T13:40:00Z'));`, ctx);
-  assert.doesNotMatch(ctx._getEl('liveView').innerHTML, /Sky Sport News Live/);
+  assert.doesNotMatch(ctx._getEl('liveView').innerHTML, /ProSieben/);
   assert.match(ctx._getEl('liveView').innerHTML, /Wer weiß denn sowas\?/);
 
-  // iPhone/iOS nutzt weiterhin fehlerfreien https-Link mit target="_blank"
+  // Veralteter 'sky'-Trackfilter faellt sauber auf 'all' zurueck
+  vm.runInContext(`activeLiveTrackFilter = 'sky'; renderLiveView(new Date('2026-11-17T13:40:00Z'));`, ctx);
+  assert.match(ctx._getEl('liveView').innerHTML, /Wer weiß denn sowas\?/);
+  assert.match(ctx._getEl('liveView').innerHTML, /taff/);
+
+  // iPhone/iOS zeigt ebenfalls nur Direkt-Streams ohne Sky Sport
   const iosCtx = loadAppContext({ platform: 'iPhone', maxTouchPoints: 5 });
   vm.runInContext(`liveTvData = ${JSON.stringify(sampleLive)}; switchMainView('live'); renderLiveView(new Date('2026-11-17T13:40:00Z'));`, iosCtx);
   const iosHtml = iosCtx._getEl('liveView').innerHTML;
-  assert.match(iosHtml, /href="https:\/\/www\.sky\.de\/tvguide" target="_blank" rel="noopener"[^>]*>Sky Guide ↗<\/a>/);
+  assert.doesNotMatch(iosHtml, /Sky Sport/);
   assert.doesNotMatch(iosHtml, /href="skygo:\/\/"/);
+  assert.match(iosHtml, /https:\/\/www\.joyn\.de\/play\/live-tv\?channel_id=138/);
 
   ctx.switchMainView('list');
   assert.equal(ctx._getEl('liveView').classList.contains('hidden'), true);
 });
 
-test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Sender-Toast vs. iOS Web) und RTL+/Joyn direkt', () => {
+test('handleLivePrimaryAction routet RTL+/Joyn direkt und openMagazineItemDetail behaelt Sky Go auf macOS', () => {
   const macCtx = loadAppContext({ platform: 'MacIntel', maxTouchPoints: 0 });
-  vm.runInContext(`
-    handleLivePrimaryAction({
-      id: 'sky1',
-      channel: 'Sky Sport Bundesliga',
-      track: 'sky',
-      title: 'Topspiel live',
-      webUrl: 'https://www.sky.de/tvguide',
-    });
-  `, macCtx);
-  assert.equal(macCtx._getCopiedText(), 'Sky Sport Bundesliga');
-  assert.equal(macCtx.window.location.href, 'skygo://');
-  assert.equal(macCtx._opens.length, 0);
-
-  // nativer $liveView Klick auf a[data-sky-copy] kopiert Sender + TV-Guide-Toast und verhindert Default-Navigation NICHT
-  macCtx.bindEvents();
-  let prevented = false;
-  macCtx._getEl('liveView').dispatchEvent({
-    type: 'click',
-    target: {
-      closest(sel) {
-        if (sel === 'a[data-sky-copy]') {
-          return {
-            getAttribute: (k) => (k === 'data-sky-copy' ? 'Sky Sport F1' : k === 'data-sky-live-ch' ? 'Sky Sport F1' : null),
-          };
-        }
-        return null;
-      },
-    },
-    preventDefault() { prevented = true; },
-  });
-  assert.equal(prevented, false);
-  assert.equal(macCtx._getCopiedText(), 'Sky Sport F1');
-  assert.equal(macCtx._toasts.some((t) => t.msg.includes('TV Guide') && t.msg.includes('Sky Sport F1')), true);
-
-  // Magazin-Detail (✦ Fuer dich) rendert auf macOS bei Sky ebenfalls nativen skygo://-Anchor
+  // Magazin-Detail (✦ Fuer dich) rendert auf macOS bei Sky weiterhin nativen skygo://-Anchor
   vm.runInContext(`
     magazine = {
       sections: [{ id: 'neu', items: [{ key: 'm1', tmdb_id: 99, type: 'movie', title: 'Sky Exclusiv Film', providers_app: ['sky'] }] }],
@@ -513,13 +490,6 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Sender
 
   const iosCtx = loadAppContext({ platform: 'iPhone', maxTouchPoints: 5 });
   vm.runInContext(`
-    handleLivePrimaryAction({
-      id: 'sky1',
-      channel: 'Sky Sport Bundesliga',
-      track: 'sky',
-      title: 'Topspiel live',
-      webUrl: 'https://www.sky.de/tvguide',
-    });
     handleLivePrimaryAction({
       id: 'mag1',
       channel: 'RTL',
@@ -534,8 +504,7 @@ test('handleLivePrimaryAction routet Sky je nach Geraet (macOS skygo:// + Sender
       title: 'Navy CIS',
     });
   `, iosCtx);
-  assert.equal(iosCtx._opens.length, 3);
-  assert.equal(iosCtx._opens[0].url, 'https://www.sky.de/tvguide');
-  assert.equal(iosCtx._opens[1].url, 'https://plus.rtl.de/rtl/live');
-  assert.equal(iosCtx._opens[2].url, 'https://www.joyn.de/play/live-tv?channel_id=139');
+  assert.equal(iosCtx._opens.length, 2);
+  assert.equal(iosCtx._opens[0].url, 'https://plus.rtl.de/rtl/live');
+  assert.equal(iosCtx._opens[1].url, 'https://www.joyn.de/play/live-tv?channel_id=139');
 });
