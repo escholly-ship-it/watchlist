@@ -3360,14 +3360,10 @@ function openMagazineItemDetail(key) {
     : '';
 
   const primarySvc = primaryServiceForMag(it);
-  const skyMagBtnHtml = primarySvc?.id === 'sky'
-    ? (isMacDesktop()
-      ? `<a class="btn-primary-cta" href="skygo://" data-sky-copy="${escAttr(it.title || '')}" aria-label="Sky Go öffnen (kopiert Titel und startet Sky Go App)">
-          <span aria-hidden="true">▶</span> Sky Go öffnen <span class="btn-cta-ext" aria-hidden="true">↗</span>
-        </a>`
-      : `<a class="btn-primary-cta" href="${escAttr(SERVICE_SEARCH.sky.replace('{q}', encodeURIComponent(it.title || '')))}" target="_blank" rel="noopener">
-          <span aria-hidden="true">▶</span> Bei Sky Go suchen <span class="btn-cta-ext" aria-hidden="true">↗</span>
-        </a>`)
+  const skyMagBtnHtml = primarySvc?.id === 'sky' && isMacDesktop()
+    ? `<a class="btn-primary-cta" href="skygo://" data-sky-copy="${escAttr(it.title || '')}" aria-label="Sky Go öffnen (kopiert Titel und startet Sky Go App)">
+        <span aria-hidden="true">▶</span> Sky Go öffnen <span class="btn-cta-ext" aria-hidden="true">↗</span>
+      </a>`
     : '';
 
   $magazineModalBody.innerHTML = `
@@ -3841,10 +3837,10 @@ function detailCtaHtml(item, svc) {
     prefilled = tpl.includes('{q}');
   }
   // WL-43: Sky Go DE hat weder Web-Player noch Inhalts-Deep-Links, startet auf
-  // macOS Desktop aber per `skygo://` die Sky Go App. Dort oeffnet der Klick die
-  // App und kopiert den Titel fuer die Suche (⌘V); iOS/iPadOS/Web bleiben beim
-  // fehlerfreien https-Suchlink (`sky.de/suche`).
-  if (svc.id === 'sky' && direct && isMacDesktop()) {
+  // macOS Desktop aber per `skygo://` die Sky Go App. Auf iOS/iPadOS/Web ohne
+  // Sky-Go-Desktop-App lassen wir den nutzlosen sky.de/suche-Button komplett weg.
+  if (svc.id === 'sky' && direct) {
+    if (!isMacDesktop()) return '<span class="detail-cta-slot"></span>';
     const skyLabel = 'Sky Go öffnen';
     return `<a class="btn-primary-cta" href="skygo://" data-sky-copy="${escAttr(item.title || '')}" aria-label="${escAttr(skyLabel)} (kopiert Titel und startet Sky Go App)">
         <span aria-hidden="true">▶</span> ${esc(skyLabel)} <span class="btn-cta-ext" aria-hidden="true">↗</span>

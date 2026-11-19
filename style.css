@@ -2424,6 +2424,7 @@ body.mag-open { overflow: hidden; }
 }
 
 /* Slots ohne eigene Box: leer erzeugen sie keinen Abstand in .detail-actions */
+.detail-cta-slot,
 .detail-pin-slot { display: contents; }
 
 .btn-pin {
