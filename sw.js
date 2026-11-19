@@ -10,7 +10,8 @@
 // v8 (Paket B + Sky Go Anchor): 10 Echt-Live-Sender, nativer skygo://-Link in Live/20:15 & Magazin
 // v9 (Direkt-Streams + ARD/ZDF vorne): RTL+/Joyn/ARD CRID Live-Links, feste Sender-Sortierung
 // v10 (Live-TV ohne Sky): 5 Direkt-Stream-Sender (ARD, ZDF, RTL+, Joyn) — Sky Go bleibt in Merkliste & Für dich
-const CACHE_VERSION = 'v10';
+// v11 (Sky iOS ohne Web-Suchlink): Sky-CTA nur auf macOS (skygo://), auf iOS/Web kein sky.de/suche-Button
+const CACHE_VERSION = 'v11';
 const SHELL_CACHE = `watchlist-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `watchlist-runtime-${CACHE_VERSION}`;
 

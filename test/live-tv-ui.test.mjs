@@ -172,7 +172,7 @@ function loadAppContext({ platform = 'MacIntel', maxTouchPoints = 0 } = {}) {
   return context;
 }
 
-test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v10-Cache)', () => {
+test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveView (v11-Cache)', () => {
   assert.match(HTML_SRC, /id="tabList"/);
   assert.match(HTML_SRC, /id="tabDiscover"/);
   assert.match(HTML_SRC, /id="tabLiveNow"/);
@@ -183,7 +183,7 @@ test('index.html, style.css und sw.js enthalten V1 4-Tab-Navigation und #liveVie
   assert.match(CSS_SRC, /\.live-view/);
   assert.match(CSS_SRC, /#app\.view-live #watchlist/);
   assert.match(CSS_SRC, /#app\.view-primetime #watchlist/);
-  assert.match(SW_SRC, /CACHE_VERSION = 'v10'/);
+  assert.match(SW_SRC, /CACHE_VERSION = 'v11'/);
 });
 
 test('buildLiveNowItems und buildPrimetimeItems filtern Sky raus, pinnen ARD #1 + ZDF #2 vor RTL/Sat.1/ProSieben und verlinken Direkt-Streams', () => {
@@ -490,6 +490,10 @@ test('handleLivePrimaryAction routet RTL+/Joyn direkt und openMagazineItemDetail
 
   const iosCtx = loadAppContext({ platform: 'iPhone', maxTouchPoints: 5 });
   vm.runInContext(`
+    magazine = {
+      sections: [{ id: 'neu', items: [{ key: 'm1', tmdb_id: 99, type: 'movie', title: 'Sky Exclusiv Film', providers_app: ['sky'] }] }],
+    };
+    openMagazineItemDetail('m1');
     handleLivePrimaryAction({
       id: 'mag1',
       channel: 'RTL',
@@ -504,6 +508,10 @@ test('handleLivePrimaryAction routet RTL+/Joyn direkt und openMagazineItemDetail
       title: 'Navy CIS',
     });
   `, iosCtx);
+  const iosMagHtml = iosCtx._getEl('magazineModalBody').innerHTML;
+  assert.doesNotMatch(iosMagHtml, /sky\.de\/suche/);
+  assert.doesNotMatch(iosMagHtml, /skygo:\/\//);
+  assert.match(iosMagHtml, /Trailer ansehen/);
   assert.equal(iosCtx._opens.length, 2);
   assert.equal(iosCtx._opens[0].url, 'https://plus.rtl.de/rtl/live');
   assert.equal(iosCtx._opens[1].url, 'https://www.joyn.de/play/live-tv?channel_id=139');
